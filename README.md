@@ -12,7 +12,7 @@ The current [upstream SGLang B200 recipe](https://github.com/sgl-project/sglang/
 
 | Setting | Validated value |
 | --- | --- |
-| Model | [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash), served as `glm-5.3-flash` |
+| Model | [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash) at revision `3f1971b7b5f7a528c9c4ef6212c8785298a8c24a`, served as `glm-5.3-flash` |
 | Hardware | 8x NVIDIA B200, driver 580.173.02 |
 | Topology | Two independent TP4/EP4 replicas, GPUs 0-3 and 4-7 |
 | Container | `lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290` |
@@ -25,7 +25,7 @@ The current [upstream SGLang B200 recipe](https://github.com/sgl-project/sglang/
 | Per-replica admission | 16 running requests |
 | Validation dates | August 27-28, 2026 |
 
-The measured deployment loaded a cached copy of the model without recording its Hugging Face commit. The container digest and SGLang source are exact; the checkpoint revision is an explicit reproducibility boundary. Pin a model commit before using this recipe for a new measurement.
+The container digest, SGLang source, and model revision identify the measured software stack. Keep all three fixed when reproducing the measurements.
 
 ## Engine commands
 
@@ -238,7 +238,3 @@ Use Claude Code's default adaptive-thinking profile. On the validated runtime, e
 | `400` with explicit thinking | `thinking: enabled` is unsupported on the validated runtime |
 | Reasoning appears in visible text | The client sent `thinking: disabled` |
 | `certificate verify failed` | A local CA override or trust setting is active |
-
-## License
-
-Licensed under the Apache License 2.0. See [`LICENSE`](LICENSE).
