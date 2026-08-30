@@ -135,22 +135,41 @@ proxy_send_timeout 3000s;
 
 ## Measured performance
 
-The table reports per-session decode-window output tokens per second. Concurrent sessions were split evenly across the two replicas and then averaged. The 128K through 512K cells used 2,048-token outputs. The approximately 1M cell used 990,834 rendered input tokens and 512-token outputs on one replica. All requests set `reasoning_effort: low`.
+The results below are validation observations from a custom harness and prompt corpus. Exact numerical reproduction requires those unpublished artifacts. Each cell used three repetitions of streaming `/v1/chat/completions` requests with `temperature: 0`, `reasoning_effort: low`, and fixed output lengths. Success includes every request in the denominator.
 
-| Input context | 1 concurrent | 8 concurrent | 16 concurrent |
-| ---: | ---: | ---: | ---: |
-| 128K | 323 tok/s | 116 tok/s | 68 tok/s |
-| 400K | 313 tok/s | 78 tok/s | 33 tok/s |
-| 512K | 323 tok/s | 71 tok/s | 25 tok/s |
-| About 1M | 288 tok/s | Not measured | Not measured |
+| Rendered input tokens | Total concurrency | Active replicas | Output tokens per request | Success |
+| ---: | ---: | --- | ---: | ---: |
+| 131,102-131,103 | 1 | A | 2,048 | 3/3 |
+| 131,100-131,107 | 16 | A+B, split 8/8 | 2,048 | 48/48 |
+| 409,630-409,634 | 8 | A+B, split 4/4 | 2,048 | 24/24 |
+| 524,318-524,325 | 16 | A+B, split 8/8 | 2,048 | 48/48 |
+| 1,000,032-1,000,034 | 1 | A | 512 | 3/3 |
+| 1,000,030-1,000,034 | 4 | A+B, split 2/2 | 512 | 12/12 |
 
-Single-session decode remained between 313 and 323 tok/s from 128K through 512K. That shape is consistent with a weight-bandwidth-bound batch-1 decode path, but no profiler trace was collected to establish the mechanism.
+All 138 requests returned HTTP 200 with the requested completion length. None timed out or returned HTTP 429. The 524K-input, concurrency-16 row completed every request in each repetition without an observed out-of-memory error. The tested point establishes successful completion at concurrency 16. Maximum capacity remains unmeasured.
 
-Eight staggered coding sessions with repeated prefixes produced a median 350 tok/s per session and 0.25 seconds median warm time to first token. That traffic-shape run used shorter mixed contexts and warm prefix-cache hits, so it is not comparable to the synchronized table cells.
+At concurrency 1, end-to-end output rate divides output tokens by full request wall time, including prefill. The median was 245.3 tok/s at about 131K input tokens, with a 244.8-248.0 tok/s range. At about 1M input tokens, the median was 12.50 tok/s, with a 12.47-12.54 tok/s range.
 
-A cold 990,834-token prompt took about 40 seconds to first token at concurrency 1. Six of six requests completed at each tested concurrency from one through four. A cached repeat took about 4.3 seconds to first token.
+Aggregate concurrent throughput, decode TPOT, and route latency are excluded because the recorded methods and timing data do not support those metrics.
 
-These measurements came from a custom internal harness. Raw traces and the harness are not published in this repository. Independent reproduction requires an equivalent harness and prompt set.
+## Correctness and cache behavior
+
+The GSM8K evaluation used the full 1,319-problem test set with SHA-256 `3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14`, temperature 0, and an instruction to place the final integer after `Answer:`. Scoring extracts the final numeric value after the last `Answer` marker and compares it numerically with the reference. The comparator condition omitted `reasoning_effort`, which resolves to max effort on this checkpoint, and used a 2,048-token output limit. It scored 1,284/1,319, or 97.35%; the longest completion contained 1,998 tokens, and none reached the limit.
+
+The low-effort condition used the same test set, prompt, temperature, and scoring method with `reasoning_effort: low` and a 1,024-token output limit. It scored 1,272/1,319, or 96.44%; the longest completion contained 356 tokens, and none reached the limit.
+
+The cache study used ingress `/v1/chat/completions` requests and flushed both replica caches before each repetition. Each condition contains three repetitions with three sessions and four turns, for 36 requests per condition and 144/144 successful requests overall. TTFT-any measures time to the first output event, whether reasoning or visible content. Within each repetition, turn 1 is the median across three sessions and turns 2-4 are the median across nine requests. The table reports the median across repetitions. The ratio is calculated within each repetition before taking the median.
+
+| Request shape | Turn 1 TTFT-any | Turns 2-4 TTFT-any | Turn 1 / later turns |
+| --- | ---: | ---: | ---: |
+| Every turn cold | 3.16 s | 3.39 s | 0.93x |
+| Repeated prefix without `x-claude-code-session-id` | 3.11 s | 0.77 s | 3.98x |
+| Repeated prefix with a stable `x-claude-code-session-id` | 3.10 s | 0.62 s | 5.02x |
+| Stable affinity with a changed leading system line | 3.13 s | 3.24 s | 0.97x |
+
+For the changed-system-line condition, only the leading system line changed before the repeated repository prefix. Later-turn TTFT-any returned to the 3.1-3.4 second range measured by turn 1 and the cold control. All four conditions used the OpenAI request shape rather than the Anthropic Messages API.
+
+The identifier check asked for exact visible replies to `kimi-k3`, `nova-x7`, `apollo-n9`, `route_query_v2`, `def handle_request`, and `glm-5.3-flash`. The deployed speculative configuration passed 36/36 requests across both replicas and three repetitions. With speculative decoding removed, 31/36 replies were visible exact matches. The five other replies preserved the requested string in reasoning instead of visible content. All five were `glm-5.3-flash`, which was visible exact in 1/6 spec-off observations. This is an observed placement difference; the results do not isolate speculation configuration from response stochasticity.
 
 ## OpenAI-compatible client
 
