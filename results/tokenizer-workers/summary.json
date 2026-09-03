@@ -1,0 +1,19 @@
+{
+  "disconnected_client_recovery_status": 200,
+  "four_workers": {
+    "count_tokens_wall_ms": 1476,
+    "during_ping_p99_ms": 1.7
+  },
+  "method": {
+    "date": "2026-08-30",
+    "load": "one /v1/messages/count_tokens request rendering 990,819 input tokens",
+    "oracle": "/ping liveness sampled during preprocessing, plus concurrent short generations"
+  },
+  "one_worker": {
+    "count_tokens_wall_ms": 2094,
+    "during_ping_p99_ms": 1666.2
+  },
+  "schema": "b200-glm53-tokenizer-workers-summary-v1",
+  "streaming_revalidated": true,
+  "tokenization_speedup_fraction": 0.42
+}

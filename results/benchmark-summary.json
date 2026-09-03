@@ -1,0 +1,208 @@
+{
+  "campaigns": [
+    {
+      "campaign": "Historical topology selection: dual TP4/EP4 versus one TP8/EP8",
+      "campaign_id": "card-a-topology-20260826",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-26",
+      "manifest": "results/manifests/card-a-topology-20260826.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "MoE backend selection: deep_gemm versus flashinfer_trtllm",
+      "campaign_id": "card-b-moe-backend-20260827",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-27",
+      "manifest": "results/manifests/card-b-moe-backend-20260827.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Speculative-decoding selection: off, adaptive, and static widths",
+      "campaign_id": "card-c-speculation-20260827",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-27",
+      "manifest": "results/manifests/card-c-speculation-20260827.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Prefill-chunk selection at 128K and 400K input",
+      "campaign_id": "card-d-prefill-chunk-20260827",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-27",
+      "manifest": "results/manifests/card-d-prefill-chunk-20260827.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Frozen-profile context and concurrency ladder (phases 1-3)",
+      "campaign_id": "phase-ladder-20260827",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-27",
+      "manifest": "results/manifests/phase-ladder-20260827.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Traffic-shape demonstration: eight staggered coding sessions",
+      "campaign_id": "card-f-traffic-shape-20260827",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-27",
+      "manifest": "results/manifests/card-f-traffic-shape-20260827.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Audited serving envelope: six cells, three repetitions each",
+      "campaign_id": "serving-envelope-20260828",
+      "claim_class": "public-derivable",
+      "date": "2026-08-28",
+      "manifest": "results/manifests/serving-envelope-20260828.json",
+      "public_results": "results/serving-envelope/",
+      "status": "completed"
+    },
+    {
+      "campaign": "Prefix reuse and session-affinity cache study",
+      "campaign_id": "cache-affinity-20260828",
+      "claim_class": "public-derivable",
+      "date": "2026-08-28",
+      "manifest": "results/manifests/cache-affinity-20260828.json",
+      "public_results": "results/cache-affinity/",
+      "status": "completed"
+    },
+    {
+      "campaign": "Correctness panels: GSM8K, identifier checks, and the coding trace",
+      "campaign_id": "correctness-panels-20260828",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-28",
+      "manifest": "results/manifests/correctness-panels-20260828.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Speculative-decoding retune against captured coding traffic (W14/W12/W6)",
+      "campaign_id": "config-selection-20260829",
+      "claim_class": "repetition-level-public",
+      "date": "2026-08-29",
+      "manifest": "results/manifests/config-selection-20260829.json",
+      "public_results": "results/config-selection/",
+      "status": "completed"
+    },
+    {
+      "campaign": "Tokenizer-worker A/B and endpoint hardening (P2a)",
+      "campaign_id": "tokenizer-workers-20260830",
+      "claim_class": "public-derivable",
+      "date": "2026-08-30",
+      "manifest": "results/manifests/tokenizer-workers-20260830.json",
+      "public_results": "results/tokenizer-workers/",
+      "status": "completed"
+    },
+    {
+      "campaign": "Deployment hardening checks: cancellation, body cap, routes, reboot",
+      "campaign_id": "hardening-checks-20260830",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-30",
+      "manifest": "results/manifests/hardening-checks-20260830.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Standing endpoint verification after the project-scoped tunnel migration",
+      "campaign_id": "deployment-verification-20260902",
+      "claim_class": "retained-summary-only",
+      "date": "2026-09-02",
+      "manifest": "results/manifests/deployment-verification-20260902.json",
+      "public_results": null,
+      "status": "completed"
+    },
+    {
+      "campaign": "Bounded matched GLM-5.3-Flash versus DeepSeek-V4-Flash-0731 endpoint panel",
+      "campaign_id": "track5-glm-vs-dsv4-20260828",
+      "claim_class": "retained-summary-only",
+      "date": "2026-08-28",
+      "manifest": "results/manifests/track5-glm-vs-dsv4-20260828.json",
+      "public_results": null,
+      "status": "completed"
+    }
+  ],
+  "model": {
+    "gpu": "8x NVIDIA B200, driver 580.173.02",
+    "image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "kda_state_slots_per_replica": 446,
+    "kv_capacity_tokens_per_replica": 7362048,
+    "kv_dtype": "fp8_e4m3",
+    "max_running_requests_per_replica": 16,
+    "mem_fraction_static": 0.85,
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a",
+    "prefill_chunk_tokens_effective": 16384,
+    "served_model_name": "glm-5.3-flash",
+    "sglang_source_commit": "d6ab04bdf1",
+    "sglang_version": "0.0.0.dev1+gd6ab04bdf1"
+  },
+  "not_run_or_invalid": [
+    {
+      "description": "No accepted matched current-stack dual-TP4-versus-TP8 result exists. The later attempt did not complete an accepted topology cell; Card A is the only topology evidence and carries its configuration mismatch.",
+      "id": "matched-current-stack-tp4-vs-tp8",
+      "status": "not-run"
+    },
+    {
+      "description": "No local BF16-KV correctness control against the published FP8-KV profile. The two GSM8K scores are FP8-KV reasoning-effort conditions, not precision arms.",
+      "id": "bf16-kv-control",
+      "status": "not-run"
+    },
+    {
+      "description": "No accepted W11 latency or TPOT comparison for request-cap 16 versus 48. The mandatory W6 identifier check stopped the campaign. The bounded scheduler observation is excluded from performance tables because seed, order, response mix, and output-token budget confound a matched conclusion.",
+      "id": "w11-request-cap-performance",
+      "status": "stopped"
+    },
+    {
+      "description": "No accepted engine-to-ingress route comparison from the publication campaign. 31 of 72 route identities were mutated, so the comparison was not controlled. A later route-only attempt ran zero measured requests.",
+      "id": "engine-to-ingress-route-comparison",
+      "status": "invalid"
+    },
+    {
+      "description": "No direct per-request cache-hit attribution for the published cache study. The accepted evidence is a latency association plus the configuration-level placement semantics of consistent hashing.",
+      "id": "direct-cache-attribution",
+      "status": "not-run"
+    },
+    {
+      "description": "No maximum-capacity or saturation search. The audited serving envelope is a tested operating point, not a capacity ceiling.",
+      "id": "capacity-saturation-search",
+      "status": "not-run"
+    },
+    {
+      "description": "No audited serving-envelope cell above concurrency 16.",
+      "id": "concurrency-above-16-audited-envelope",
+      "status": "not-run"
+    },
+    {
+      "description": "No open-loop Poisson or gamma arrival process; all cells used closed-loop concurrency.",
+      "id": "open-loop-arrivals",
+      "status": "not-run"
+    },
+    {
+      "description": "No high-availability or failover test. The reboot rehearsal covered automatic container recovery only.",
+      "id": "high-availability-failover",
+      "status": "not-run"
+    },
+    {
+      "description": "No broad multimodal quality or maximum-image-size campaign. Image input is functionally supported; coverage is not complete across every route and request shape.",
+      "id": "multimodal-quality-campaign",
+      "status": "not-run"
+    },
+    {
+      "description": "The 65,536-token prefill chunk timed out and produced no accepted result; it appears in no performance table.",
+      "id": "card-d-65536-chunk",
+      "status": "invalid"
+    },
+    {
+      "description": "The planned 32K topology arm did not run; the retained Card A directory contains only the 128K decision records.",
+      "id": "card-a-32k-topology-arm",
+      "status": "not-run"
+    }
+  ],
+  "schema": "b200-glm53-benchmark-summary-v1"
+}

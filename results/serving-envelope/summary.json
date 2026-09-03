@@ -1,0 +1,262 @@
+{
+  "cells": {
+    "H1": {
+      "concurrency": 1,
+      "median_output_tps": 245.293,
+      "output_tokens_per_request": 2048,
+      "repetitions": [
+        {
+          "output_tps": [
+            244.78
+          ],
+          "repetition": 1,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        },
+        {
+          "output_tps": [
+            247.993
+          ],
+          "repetition": 2,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        },
+        {
+          "output_tps": [
+            245.293
+          ],
+          "repetition": 3,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        }
+      ],
+      "success": "3/3"
+    },
+    "H2": {
+      "concurrency": 16,
+      "output_tokens_per_request": 2048,
+      "repetitions": [
+        {
+          "output_tps": null,
+          "repetition": 1,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        },
+        {
+          "output_tps": null,
+          "repetition": 2,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        },
+        {
+          "output_tps": null,
+          "repetition": 3,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        }
+      ],
+      "success": "48/48"
+    },
+    "H3": {
+      "concurrency": 8,
+      "output_tokens_per_request": 2048,
+      "repetitions": [
+        {
+          "output_tps": null,
+          "repetition": 1,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 8,
+          "success": 8
+        },
+        {
+          "output_tps": null,
+          "repetition": 2,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 8,
+          "success": 8
+        },
+        {
+          "output_tps": null,
+          "repetition": 3,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 8,
+          "success": 8
+        }
+      ],
+      "success": "24/24"
+    },
+    "H4": {
+      "concurrency": 16,
+      "output_tokens_per_request": 2048,
+      "repetitions": [
+        {
+          "output_tps": null,
+          "repetition": 1,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        },
+        {
+          "output_tps": null,
+          "repetition": 2,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        },
+        {
+          "output_tps": null,
+          "repetition": 3,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 16,
+          "success": 16
+        }
+      ],
+      "success": "48/48"
+    },
+    "H5": {
+      "concurrency": 1,
+      "median_output_tps": 12.502,
+      "output_tokens_per_request": 512,
+      "repetitions": [
+        {
+          "output_tps": [
+            12.469
+          ],
+          "repetition": 1,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        },
+        {
+          "output_tps": [
+            12.502
+          ],
+          "repetition": 2,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        },
+        {
+          "output_tps": [
+            12.537
+          ],
+          "repetition": 3,
+          "replicas": [
+            "A"
+          ],
+          "requests": 1,
+          "success": 1
+        }
+      ],
+      "success": "3/3"
+    },
+    "H6": {
+      "concurrency": 4,
+      "output_tokens_per_request": 512,
+      "repetitions": [
+        {
+          "output_tps": null,
+          "repetition": 1,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 4,
+          "success": 4
+        },
+        {
+          "output_tps": null,
+          "repetition": 2,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 4,
+          "success": 4
+        },
+        {
+          "output_tps": null,
+          "repetition": 3,
+          "replicas": [
+            "A",
+            "B"
+          ],
+          "requests": 4,
+          "success": 4
+        }
+      ],
+      "success": "12/12"
+    }
+  },
+  "excluded": {
+    "aggregate_concurrent_throughput": "retained request records lack absolute request-start clocks; a true batch makespan is not reconstructable",
+    "decode_tpot_itl": "retained stream events lack per-output-event clocks; the saved per-token field stored decode duration, not per-token latency"
+  },
+  "http_429": 0,
+  "request_contract": {
+    "cache_busted": true,
+    "corpus": "reproduce/corpus-federalist.txt",
+    "corpus_sha256": "5a06783f628ed6faf07d78a8b7bf0f9fd1dc22ad13edc2bd5eeba0102af02690",
+    "ignore_eos": true,
+    "min_tokens_max_tokens": true,
+    "reasoning_effort": "low",
+    "route": "/v1/chat/completions",
+    "stream": true,
+    "temperature": 0
+  },
+  "schema": "b200-glm53-serving-envelope-summary-v1",
+  "success_by_cell": {
+    "H1": "3/3",
+    "H2": "48/48",
+    "H3": "24/24",
+    "H4": "48/48",
+    "H5": "3/3",
+    "H6": "12/12"
+  },
+  "timeouts": 0,
+  "total_requests": 138,
+  "total_successes": 138
+}

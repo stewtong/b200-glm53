@@ -1,0 +1,41 @@
+{
+  "boundary": "Operational ladder under dual TP4/EP4, flashinfer_trtllm, static 5-1-6, FP8 KV, low effort, effective 16,384-token chunking. Phase 1: 16K-128K input at concurrency 1-16 with 2,048 output tokens. Phase 2: 256K-512K at concurrency 1-16 with 2,048 output tokens. Phase 3: about 1M at concurrency 1, 2, and 4 with 512 output tokens. The 512K concurrency-16 point fell below the preregistered per-session decode threshold; that is a tested operational point, not a capacity limit.",
+  "campaign": "Frozen-profile context and concurrency ladder (phases 1-3)",
+  "campaign_id": "phase-ladder-20260827",
+  "claim_class": "retained-summary-only",
+  "date": "2026-08-27",
+  "environment": {
+    "ep": 4,
+    "gpu": "8x NVIDIA B200, driver 580.173.02",
+    "gpu_visibility": "replica A GPUs 0-3, replica B GPUs 4-7",
+    "image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "ingress": "loopback nginx with session-affine consistent hash on x-claude-code-session-id",
+    "kda_state_slots_per_replica": 446,
+    "kv_capacity_tokens_per_replica": 7362048,
+    "kv_dtype": "fp8_e4m3",
+    "max_running_requests_per_replica": 16,
+    "mem_fraction_static": 0.85,
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a",
+    "moe_backend": "flashinfer_trtllm",
+    "ports": "loopback 30000 and 30100",
+    "prefill_chunk_tokens_effective": 16384,
+    "replica_count": 2,
+    "served_model_name": "glm-5.3-flash",
+    "sglang_source_commit": "d6ab04bdf1",
+    "sglang_version": "0.0.0.dev1+gd6ab04bdf1",
+    "speculation": "static NEXTN 5-1-6",
+    "tokenizer_worker_num": 1,
+    "topology": "two independent TP4/EP4 replicas",
+    "tp": 4
+  },
+  "evidence_class": "retained summary records only; a different harness and timing record from the later audited serving envelope",
+  "method": {
+    "phase1": "16K-128K input, c1-c16, 2,048 output tokens",
+    "phase2": "256K-512K input, c1-c16, 2,048 output tokens",
+    "phase3": "about 1M input, c1-c4, 512 output tokens"
+  },
+  "retained_evidence": "track4-glm53flash-p1-20260827, p2-20260827, p3-20260827",
+  "schema": "b200-glm53-campaign-manifest-v1",
+  "status": "completed"
+}
