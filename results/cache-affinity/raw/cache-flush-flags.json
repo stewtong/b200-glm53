@@ -1,0 +1,50 @@
+{
+  "E0-r1": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E0-r2": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E0-r3": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E1-r1": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E1-r2": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E1-r3": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E2-r1": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E2-r2": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E2-r3": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E3-r1": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E3-r2": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  },
+  "E3-r3": {
+    "flush_A_status": 200,
+    "flush_B_status": 200
+  }
+}

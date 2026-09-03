@@ -2,188 +2,113 @@
 
 # GLM-5.3-Flash on 8x B200
 
-Measured SGLang serving profile for GLM-5.3-Flash on one 8x NVIDIA B200 node. The configuration runs two independent TP4/EP4 replicas behind a session-affine reverse proxy and supports OpenAI-compatible Chat Completions plus the Anthropic Messages API.
+A reference SGLang deployment for GLM-5.3-Flash on one 8x NVIDIA B200 node. It runs two independent SGLang servers, each with tensor parallel size 4 and expert parallel size 4 (TP4/EP4), behind a session-affine nginx reverse proxy. The servers expose the OpenAI-compatible Chat Completions API, the OpenAI Responses API, and the Anthropic Messages API for interactive coding-agent traffic. `BENCHMARKS.md` documents the measurements used to select this configuration.
 
-This repository documents a deployment pattern and its measured behavior. It contains no hosted endpoint, credentials, infrastructure identifiers, or production automation.
+This repository provides launch scripts, proxy configuration, a benchmark client, and sanitized results. You supply the model files, B200 node, container runtime, and credentials. Host values are placeholders, and every `127.0.0.1` listener is bound to loopback.
 
-The current [upstream SGLang B200 recipe](https://github.com/sgl-project/sglang/blob/9fc60a8afd64b135342a7313bf611285aeab7208/docs/src/snippets/configs/zai-org/glm-5.3-flash.jsx#L498-L541) uses a single TP8/EP8 engine with `deep_gemm` and adaptive EAGLE for its verified low-latency profile. The configuration here is a separately measured dual-replica alternative for interactive traffic and session-affine cache locality.
+## Run the reference deployment
 
-## Validated serving profile
+Prerequisites: one 8x B200 node with the container runtime and NVIDIA GPU support, the pinned model snapshot on local disk, `curl`, and Python 3 for response verification and the benchmark client. Two loopback engine ports (30000, 30100) and one loopback proxy port (8080) are used.
 
-| Setting | Validated value |
+| Pinned input | Value |
 | --- | --- |
 | Model | [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash) at revision `3f1971b7b5f7a528c9c4ef6212c8785298a8c24a`, served as `glm-5.3-flash` |
-| Hardware | 8x NVIDIA B200, driver 580.173.02 |
-| Topology | Two independent TP4/EP4 replicas, GPUs 0-3 and 4-7 |
 | Container | `lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290` |
 | SGLang runtime | `0.0.0.dev1+gd6ab04bdf1`, source commit [`d6ab04bdf1`](https://github.com/sgl-project/sglang/commit/d6ab04bdf1) |
-| DSA backends | TRT-LLM for prefill and decode |
-| MoE runner | `flashinfer_trtllm` |
-| KV cache | `fp8_e4m3` |
-| Speculative decoding | Static NEXTN 5-1-6 |
-| Context | 1,048,576 input and output tokens combined |
-| Per-replica admission | 16 running requests |
-| Validation dates | August 27-28, 2026 |
+| Driver | 580.173.02 |
 
-The container digest, SGLang source, and model revision identify the measured software stack. Keep all three fixed when reproducing the measurements.
-
-## Engine commands
-
-Run both commands inside the pinned container image with all eight GPUs visible. Mount a pinned model snapshot at `/model`. The commands differ only in GPU base ID and port.
-
-Replica A:
+Launch both SGLang servers and the loopback proxy:
 
 ```bash
-sglang serve \
-  --model-path /model \
-  --tp-size 4 \
-  --ep-size 4 \
-  --base-gpu-id 0 \
-  --dsa-prefill-backend trtllm \
-  --dsa-decode-backend trtllm \
-  --kv-cache-dtype fp8_e4m3 \
-  --moe-runner-backend flashinfer_trtllm \
-  --disable-shared-experts-fusion \
-  --speculative-algorithm NEXTN \
-  --speculative-num-steps 5 \
-  --speculative-eagle-topk 1 \
-  --speculative-num-draft-tokens 6 \
-  --reasoning-parser glm45 \
-  --tool-call-parser glm47 \
-  --served-model-name glm-5.3-flash \
-  --mem-fraction-static 0.85 \
-  --max-running-requests 16 \
-  --enable-metrics \
-  --host 127.0.0.1 \
-  --port 30000
+export MODEL_DIR="/path/to/GLM-5.3-Flash"
+export IMAGE="lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290"
+reproduce/run-replicas.sh
 ```
 
-Replica B:
+The script starts server A on GPUs 0-3 at port 30000, server B on GPUs 4-7 at port 30100, and nginx on port 8080. Each server is an independent replica. The script waits for both servers and the proxy to become ready, then runs verification probes. Any readiness or verification failure exits nonzero. Set `RUN_REPLICAS_VERIFY=0` to skip the post-launch probes.
+
+Each server runs this command; only `--base-gpu-id` and `--port` differ:
 
 ```bash
-sglang serve \
-  --model-path /model \
-  --tp-size 4 \
-  --ep-size 4 \
-  --base-gpu-id 4 \
-  --dsa-prefill-backend trtllm \
-  --dsa-decode-backend trtllm \
-  --kv-cache-dtype fp8_e4m3 \
-  --moe-runner-backend flashinfer_trtllm \
+sglang serve --model-path /model --tp-size 4 --ep-size 4 --base-gpu-id {0|4} \
+  --dsa-prefill-backend trtllm --dsa-decode-backend trtllm \
+  --kv-cache-dtype fp8_e4m3 --moe-runner-backend flashinfer_trtllm \
   --disable-shared-experts-fusion \
-  --speculative-algorithm NEXTN \
-  --speculative-num-steps 5 \
-  --speculative-eagle-topk 1 \
-  --speculative-num-draft-tokens 6 \
-  --reasoning-parser glm45 \
-  --tool-call-parser glm47 \
-  --served-model-name glm-5.3-flash \
-  --mem-fraction-static 0.85 \
-  --max-running-requests 16 \
-  --enable-metrics \
-  --host 127.0.0.1 \
-  --port 30100
+  --speculative-algorithm NEXTN --speculative-num-steps 5 \
+  --speculative-eagle-topk 1 --speculative-num-draft-tokens 6 \
+  --reasoning-parser glm45 --tool-call-parser glm47 \
+  --served-model-name glm-5.3-flash --mem-fraction-static 0.85 \
+  --max-running-requests 16 --enable-metrics --tokenizer-worker-num 4 \
+  --host 127.0.0.1 --port {30000|30100}
 ```
 
-Do not add a server-wide `--default-chat-template-kwargs` value for `reasoning_effort`. The measured deployment accepts effort per request. An omitted effort falls back to the checkpoint template's `max` setting.
+The pinned image starts each replica with an FP8 E4M3 KV cache holding 7,362,048 tokens (48.57 GB), 446 KDA/Mamba state slots, a chunked prefill size of 16,384 tokens, and a maximum of 16 running requests. The chunked prefill size comes from the image default; the command does not set `--chunked-prefill-size`. Do not set a server-wide `reasoning_effort` through `--default-chat-template-kwargs`. The deployment accepts effort per request, and an omitted value uses the checkpoint template's `max` setting.
 
-## Session-affine proxy
+`reproduce/nginx.conf` and `reproduce/proxy-common.conf` define the loopback proxy. They use exact-match locations for seven routes, consistent hashing on `x-claude-code-session-id`, `proxy_buffering off`, a 32 MiB body limit, 3,000-second upstream timeouts, and `proxy_next_upstream off`. A dispatched inference request is therefore not retried on the other replica. nginx binds to loopback only; place an authenticated TLS-terminating ingress in front of it and keep bearer keys outside the repository. Consistent hashing is not load-aware and can send too many heavy sessions to one replica. Use a load-aware proxy if the workload requires it.
 
-The two replicas do not share radix cache state. When a client sends a stable `x-claude-code-session-id`, hashing that value keeps its requests on one replica and preserves prefix-cache locality. Requests without that header receive a request-specific key. Session-only and session-plus-agent hashing were not compared in this measurement.
+## Verify the service
 
-The following nginx fragment binds only to loopback. Put an authenticated TLS ingress in front of it. Keep bearer keys outside the repository and do not expose this listener directly.
+The launch script runs these probes itself when credentials are supplied:
 
-```nginx
-map $http_x_claude_code_session_id $sticky_key {
-    ""      $request_id;
-    default $http_x_claude_code_session_id;
-}
-
-upstream glm53f {
-    hash $sticky_key consistent;
-    server 127.0.0.1:30000;
-    server 127.0.0.1:30100;
-    keepalive 32;
-}
-
-server {
-    listen 127.0.0.1:8080;
-    client_max_body_size 32m;
-    client_body_buffer_size 8m;
-
-    location = /v1/chat/completions { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location = /v1/completions      { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location = /v1/models           { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location = /v1/messages         { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location = /v1/messages/count_tokens { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location = /ping                { proxy_pass http://glm53f; include /etc/nginx/glm53f-proxy.conf; }
-    location / { return 404; }
-}
+```bash
+export GLM53F_OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
+export GLM53F_HOST="http://127.0.0.1:8080"
+export GLM53F_API_KEY="<your-key>"
+reproduce/run-replicas.sh   # readiness + generation, Messages, and Responses probes
 ```
 
-Create `/etc/nginx/glm53f-proxy.conf` with:
+| Check | Route | Passes when |
+| --- | --- | --- |
+| Liveness | `/ping` | HTTP 200 (authenticated in the reference deployment; a probe must send a key) |
+| Generation | `/v1/chat/completions` | Non-empty visible reply |
+| Anthropic Messages | `/v1/messages` | Assistant message returned |
+| OpenAI Responses | `/v1/responses` | Completed response object |
+| Authentication | any | Missing or bogus key returns 401 |
+| Body limit | any | Oversized body returns 413 |
 
-```nginx
-proxy_buffering off;
-proxy_http_version 1.1;
-proxy_set_header Connection "";
-proxy_read_timeout 3000s;
-proxy_send_timeout 3000s;
+The generation probe requires visible response text. HTTP 200 alone can hide a reasoning-only completion, a truncated reply, or a stream buffered until generation ends.
+
+## How the benchmark results selected the configuration
+
+| Reference setting | Selected by | Benchmark record |
+| --- | --- | --- |
+| Two TP4/EP4 replicas | 128K topology cell (historical) | [Topology](BENCHMARKS.md#why-dual-tp4ep4-historical-topology-selection); both arms used a different MoE backend and speculative decoding policy from the reference configuration, and no matched current-stack TP4-versus-TP8 cell exists |
+| `flashinfer_trtllm` MoE | 32K backend cell | [MoE backend](BENCHMARKS.md#moe-backend-selection) |
+| Static NEXTN speculative decoding: 5 steps, top-k 1, 6 draft tokens | 32K synthetic cell and a later replay of captured request shapes | [Speculative decoding](BENCHMARKS.md#speculative-decoding) |
+| Chunked prefill size of 16,384 tokens | 128K and 400K chunk sweep | [Chunked prefill](BENCHMARKS.md#prefill-chunk-selection) |
+| Session affinity on `x-claude-code-session-id` | nginx routing requirements and the prefix-cache study | [Prefix reuse](BENCHMARKS.md#prefix-reuse-and-session-affinity) |
+| Four tokenizer workers | Near-1M-token preprocessing A/B | [Tokenizer workers](BENCHMARKS.md#tokenizer-workers-and-hardening) |
+
+## Serving benchmark results
+
+The August 28 serving benchmark tested six combinations of input length and request concurrency, with three runs each: about 131K input tokens at concurrency 1 and 16, about 410K at concurrency 8, about 524K at concurrency 16 with 2,048 output tokens, and about 1M at concurrency 1 and 4 with 512 output tokens. All 138 requests returned HTTP 200 and the requested number of output tokens, with zero timeouts and zero HTTP 429 responses. At concurrency 1, output tokens divided by end-to-end latency, including prefill, had a median of 245.29 tok/s at about 131K input tokens and 12.50 tok/s at about 1M. Aggregate output token throughput, time per output token (TPOT), and inter-token latency (ITL) are not reported because the retained timestamps cannot calculate them.
+
+Sanitized request-level records reproduce every reported value:
+
+```bash
+python3 reproduce/derive-results.py            # verify staged summaries
+python3 reproduce/derive-results.py --self-test
 ```
 
-`proxy_buffering off` preserves streaming behavior. The 32 MiB request cap accommodates long text sessions while bounding ingress memory and disk exposure. Payload bytes and model tokens are different limits, especially for images.
+`reproduce/benchmark.py` runs the same request contract against a live endpoint. It reads `GLM53F_OPENAI_BASE_URL` and `GLM53F_API_KEY` from the environment and records failed requests, timeouts, HTTP 429 responses, and integrity violations.
 
-## Measured performance
+## Additional benchmark coverage
 
-The results below are validation observations from a custom harness and prompt corpus. Exact numerical reproduction requires those unpublished artifacts. Each cell used three repetitions of streaming `/v1/chat/completions` requests with `temperature: 0`, `reasoning_effort: low`, and fixed output lengths. Success includes every request in the denominator.
+`BENCHMARKS.md` covers the historical topology, MoE backend, speculative decoding, and chunked prefill tests; context-length and concurrency tests; the prefix-cache and session-affinity study; the tokenizer-worker A/B test and hardening checks; GSM8K, identifier, and coding-trace correctness checks; a limited GLM-versus-DSV4 endpoint comparison; and all stopped, invalid, or unrun work. Campaign manifests and the machine-readable summary are in `results/`. [SGLang discussion #37153](https://github.com/sgl-project/sglang/discussions/37153) summarizes the work as of August 30, 2026. This repository contains the underlying sanitized evidence and manifests.
 
-| Rendered input tokens | Total concurrency | Active replicas | Output tokens per request | Success |
-| ---: | ---: | --- | ---: | ---: |
-| 131,102-131,103 | 1 | A | 2,048 | 3/3 |
-| 131,100-131,107 | 16 | A+B, split 8/8 | 2,048 | 48/48 |
-| 409,630-409,634 | 8 | A+B, split 4/4 | 2,048 | 24/24 |
-| 524,318-524,325 | 16 | A+B, split 8/8 | 2,048 | 48/48 |
-| 1,000,032-1,000,034 | 1 | A | 512 | 3/3 |
-| 1,000,030-1,000,034 | 4 | A+B, split 2/2 | 512 | 12/12 |
+## API and client behavior
 
-All 138 requests returned HTTP 200 with the requested completion length. None timed out or returned HTTP 429. The 524K-input, concurrency-16 row completed every request in each repetition without an observed out-of-memory error. The tested point establishes successful completion at concurrency 16. Maximum capacity remains unmeasured.
-
-At concurrency 1, end-to-end output rate divides output tokens by full request wall time, including prefill. The median was 245.3 tok/s at about 131K input tokens, with a 244.8-248.0 tok/s range. At about 1M input tokens, the median was 12.50 tok/s, with a 12.47-12.54 tok/s range.
-
-Aggregate concurrent throughput, decode TPOT, and route latency are excluded because the recorded methods and timing data do not support those metrics.
-
-## Correctness and cache behavior
-
-The GSM8K evaluation used the full 1,319-problem test set with SHA-256 `3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14`, temperature 0, and an instruction to place the final integer after `Answer:`. Scoring extracts the final numeric value after the last `Answer` marker and compares it numerically with the reference. The comparator condition omitted `reasoning_effort`, which resolves to max effort on this checkpoint, and used a 2,048-token output limit. It scored 1,284/1,319, or 97.35%; the longest completion contained 1,998 tokens, and none reached the limit.
-
-The low-effort condition used the same test set, prompt, temperature, and scoring method with `reasoning_effort: low` and a 1,024-token output limit. It scored 1,272/1,319, or 96.44%; the longest completion contained 356 tokens, and none reached the limit.
-
-The cache study used ingress `/v1/chat/completions` requests and flushed both replica caches before each repetition. Each condition contains three repetitions with three sessions and four turns, for 36 requests per condition and 144/144 successful requests overall. TTFT-any measures time to the first output event, whether reasoning or visible content. Within each repetition, turn 1 is the median across three sessions and turns 2-4 are the median across nine requests. The table reports the median across repetitions. The ratio is calculated within each repetition before taking the median.
-
-| Request shape | Turn 1 TTFT-any | Turns 2-4 TTFT-any | Turn 1 / later turns |
-| --- | ---: | ---: | ---: |
-| Every turn cold | 3.16 s | 3.39 s | 0.93x |
-| Repeated prefix without `x-claude-code-session-id` | 3.11 s | 0.77 s | 3.98x |
-| Repeated prefix with a stable `x-claude-code-session-id` | 3.10 s | 0.62 s | 5.02x |
-| Stable affinity with a changed leading system line | 3.13 s | 3.24 s | 0.97x |
-
-For the changed-system-line condition, only the leading system line changed before the repeated repository prefix. Later-turn TTFT-any returned to the 3.1-3.4 second range measured by turn 1 and the cold control. All four conditions used the OpenAI request shape rather than the Anthropic Messages API.
-
-The identifier check asked for exact visible replies to `kimi-k3`, `nova-x7`, `apollo-n9`, `route_query_v2`, `def handle_request`, and `glm-5.3-flash`. The deployed speculative configuration passed 36/36 requests across both replicas and three repetitions. With speculative decoding removed, 31/36 replies were visible exact matches. The five other replies preserved the requested string in reasoning instead of visible content. All five were `glm-5.3-flash`, which was visible exact in 1/6 spec-off observations. This is an observed placement difference; the results do not isolate speculation configuration from response stochasticity.
-
-## OpenAI-compatible client
+OpenAI-compatible use:
 
 ```bash
 export GLM53F_API_KEY="<your-key>"
-export GLM53F_OPENAI_BASE_URL="https://<your-endpoint-host>/v1"
+export GLM53F_OPENAI_BASE_URL="http://127.0.0.1:8080/v1"
 
 curl "$GLM53F_OPENAI_BASE_URL/chat/completions" \
   -H "Authorization: Bearer $GLM53F_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model":"glm-5.3-flash","messages":[{"role":"user","content":"hello"}],"max_tokens":512,"reasoning_effort":"low"}'
 ```
-
-Python with the OpenAI SDK:
 
 ```python
 import os
@@ -201,17 +126,17 @@ response = client.chat.completions.create(
     extra_body={"reasoning_effort": "low"},
 )
 print(response.choices[0].message.content)
+
+# The Responses route is served natively on this profile:
+resp = client.responses.create(model="glm-5.3-flash", input="hello")
+print(resp.output_text)
 ```
 
-The proxy exposes `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/messages`, `/v1/messages/count_tokens`, and `/ping`. Keep `/ping` behind the same authenticated ingress as the inference routes. The OpenAI SDK's `responses.create()` route is not available in this profile.
-
-## Claude Code client
-
-Run Claude Code with variables scoped to that process:
+Claude Code, with variables scoped to the launched process:
 
 ```bash
 export GLM53F_API_KEY="<your-key>"
-export GLM53F_HOST="https://<your-endpoint-host>"
+export GLM53F_HOST="http://127.0.0.1:8080"
 
 env \
   ANTHROPIC_BASE_URL="$GLM53F_HOST" \
@@ -227,33 +152,30 @@ env \
   claude
 ```
 
-Keep `ANTHROPIC_BASE_URL` at the bare host because Claude Code appends `/v1/messages`. The context and output caps sum to 1,032,768, leaving 15,808 tokens below the model's combined 1,048,576-token limit. The variable names were verified with Claude Code on August 28, 2026 and may change in later releases.
+Keep `ANTHROPIC_BASE_URL` at the bare host because Claude Code appends `/v1/messages`; adding `/v1` produces `/v1/v1/messages` and a 404. The context and output caps sum to 1,032,768, leaving 15,808 tokens below the model's combined limit. The variable names were verified with the August 28, 2026 Claude Code release and may change in later releases. `CLAUDE_CODE_ATTRIBUTION_HEADER=0` stops Claude Code from prepending a per-request attribution block, which would otherwise be the first token to diverge between turns and defeat prefix-cache reuse.
 
-Claude Code sends the full conversation on each Anthropic Messages request. Streaming and request-body limits therefore affect long sessions. Keep `proxy_buffering off` and set the ingress body cap deliberately.
+Context arithmetic: input and output share the 1,048,576-token model limit. Set the input cap below that limit so requested output tokens still fit. Claude Code sends the full conversation on each Anthropic Messages request, so long sessions must also fit the nginx body limit and the client and proxy timeouts.
 
-Image input is supported. Serialized image bytes count against the 32 MiB proxy cap, while processed visual tokens count against model limits. Test both boundaries for the media sizes used by your application.
+Reasoning effort: set `reasoning_effort` on every OpenAI request (`low` for direct answers, `high` for harder tasks). An omitted value resolves to the checkpoint template default of `max` on this deployment and can spend much of the output budget on reasoning. Use Claude Code's default adaptive-thinking profile; explicit `thinking: disabled` can place reasoning in the visible text, and explicit `thinking: enabled` returns HTTP 400 on this runtime.
 
-Use Claude Code's default adaptive-thinking profile. On the validated runtime, explicit `thinking: disabled` can place reasoning in visible response text, while explicit `thinking: enabled` returns HTTP 400. The normal Claude Code path sends adaptive thinking and did not trigger either behavior in the compatibility checks.
+Images: the runtime accepts image input. Serialized request bytes count against the 32 MiB nginx body limit, and processed visual tokens count against the model context. Test both limits with your media sizes. Image input was not tested across every client or request shape.
 
-## Operational limits
+Streaming and limits: keep `proxy_buffering off`; without it the first byte arrives only after full generation. Use a client timeout of at least 180 seconds for large requests. nginx returns its default error bodies for 401, 404, 413, 429, 502, and 504 responses.
 
-- Stream long responses and use a client timeout of at least 180 seconds for the validated profile.
-- Keep API keys out of documentation, logs, shell history, and process arguments.
-- Terminate TLS with a publicly trusted certificate and keep certificate verification enabled.
-- Log request metadata only. A TLS-terminating ingress can still read request and response content.
-- Treat `/ping` as process liveness. Use generation probes separately when validating model health.
+## Limits of the measurements
 
-`count_tokens` reports token counts and does not perform generation admission. Tests accepted two 10 MiB requests containing 1,310,732 counted tokens, above the model's generation context. A 40 MiB request returned HTTP 413 at the proxy. Normal text generation remains bounded by the combined 1,048,576-token input and output context.
+- The tested load matrix does not establish maximum capacity. No saturation search ran, and no measured cell exceeded concurrency 16.
+- Aggregate output token throughput and TPOT are not reported because the retained timestamps cannot calculate them. `CLAIM-LEDGER.md` records these missing metrics.
+- No matched current-stack TP4-versus-TP8 cell, no local BF16-KV control, no accepted W11 request-cap comparison, no accepted route comparison, and no direct cache-hit attribution exist. `BENCHMARKS.md` records each so partial coverage is visible.
+- Maximum memory-limited concurrency at 128K input is unmeasured because the configured 16-request limit applies first.
 
-## Troubleshooting
+## Repository contents
 
-| Symptom | Likely cause |
-| --- | --- |
-| `401` | Missing or incorrect bearer key at the authenticated ingress |
-| `404` from `/v1/v1/messages` | `/v1` was added to `ANTHROPIC_BASE_URL` |
-| `404` from `responses.create()` | The Responses API is outside this serving profile |
-| `413` | Serialized request body exceeds the proxy cap |
-| Timeout on a large request | Client or proxy timeout is shorter than prefill plus generation |
-| `400` with explicit thinking | `thinking: enabled` is unsupported on the validated runtime |
-| Reasoning appears in visible text | The client sent `thinking: disabled` |
-| `certificate verify failed` | A local CA override or trust setting is active |
+- `BENCHMARKS.md`: the complete campaign record
+- `CLAIM-LEDGER.md`: claim-to-source map with evidence status
+- `reproduce/`: launch, proxy, benchmark, and derivation assets
+- `results/`: sanitized evidence, campaign manifests, environment, checksums
+
+Contributions are welcome. The model, SGLang, and any dataset keep their own licenses; nothing here redistributes them.
+
+Keep API keys out of documentation, logs, shell history, and process arguments. TLS should terminate with a publicly trusted certificate and verification enabled. Gateway access logs carry request metadata only; a TLS-terminating ingress can still read request and response content. Treat `/ping` as process liveness and use generation probes when validating model health.

@@ -1,0 +1,88 @@
+{
+  "arms": {
+    "A_p2a_4workers": {
+      "baseline_ping_p50_ms": 0.474,
+      "baseline_ping_p95_ms": 1.513,
+      "baseline_short_ms": 1080.5,
+      "count_tokens_approx_wall_ms": 1476,
+      "count_tokens_status": 200,
+      "count_tokens_total_ms_measured_incl_0.8s_launch_delay": 2276.4,
+      "during_ping_max_ms": 1.7,
+      "during_ping_p50_ms": 0.482,
+      "during_ping_p95_ms": 1.465,
+      "during_ping_p99_approx_ms": 1.7,
+      "during_short_ms": [
+        195.4,
+        198.7
+      ],
+      "input_tokens": 990819,
+      "ping_p99_under_250ms": true,
+      "tokenizer_worker_num": 4
+    },
+    "B_control_1worker": {
+      "baseline_ping_p50_ms": 0.509,
+      "baseline_ping_p95_ms": 0.661,
+      "baseline_short_ms": 228.1,
+      "count_tokens_approx_wall_ms": 2094,
+      "count_tokens_status": 200,
+      "count_tokens_total_ms_measured_incl_0.8s_launch_delay": 2894.1,
+      "during_ping_max_ms": 1666.2,
+      "during_ping_p50_ms": 0.555,
+      "during_ping_p95_ms": 0.936,
+      "during_ping_p99_approx_ms": 1666.2,
+      "during_short_ms": [
+        227.8,
+        190.3
+      ],
+      "input_tokens": 990819,
+      "ping_p99_under_250ms": false,
+      "tokenizer_worker_num": 1
+    }
+  },
+  "disconnect_revalidation": {
+    "A_p2a_disconnect_recovery": {
+      "body_contained_ok": true,
+      "note": "Opened raw streaming request, read a little, closed mid-stream, then issued short generation on same replica.",
+      "post_recovery_ping": 200,
+      "recovery_status": 200,
+      "recovery_total_ms": 193.4
+    }
+  },
+  "headline": "P2a (4 tokenizer workers) removes the 1M-preprocessing /ping tail: A p99 1.7ms vs B 1.67s; 1M-body tokenization 21% faster; streaming TTFT and disconnect delivery revalidated clean (no Granian regression).",
+  "method": "Direct loopback A/B on both replicas. Load = /v1/messages/count_tokens with 5,299,733-byte body rendering 990,819 input tokens (same filler fixture as P1, 23,042 reps). Oracle = /ping (lightweight liveness route, confirmed 200 ~1.6ms baseline) + concurrent short /v1/chat/completions (max_tokens 8). During-load samples taken while the count_tokens thread was tokenizing.",
+  "public_smoke": {
+    "note": "Authenticated chat completion through the public tunnel path; key supplied from the operator keychain, value never printed.",
+    "status": 200,
+    "total_s": 1.137,
+    "usage": {
+      "completion_tokens": 8,
+      "prompt_tokens": 16,
+      "reasoning_tokens": 9
+    }
+  },
+  "run": "track4-glm53flash-p2a-tokenizer-worker-20260830",
+  "streaming_revalidation": {
+    "A_p2a_first_chunk_ms": [
+      192.2,
+      167.2,
+      173.0
+    ],
+    "A_p2a_total_ms": [
+      943.0,
+      900.7,
+      948.9
+    ],
+    "B_control_first_chunk_ms": [
+      192.7,
+      165.3,
+      165.3
+    ],
+    "B_control_total_ms": [
+      969.6,
+      834.9,
+      1331.5
+    ],
+    "note": "Consecutive warm stream:true chat completions (max_tokens 150). Earlier single 15s first-chunk on A was one-time cold decode-graph capture after the recreate.",
+    "streaming_incremental": true
+  }
+}

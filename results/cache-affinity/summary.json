@@ -1,0 +1,51 @@
+{
+  "arms": {
+    "E0": {
+      "condition": "every turn cold",
+      "later_turns_ttft_s": 3.386,
+      "requests": 36,
+      "success": 36,
+      "turn1_over_later_ratio": 0.928,
+      "turn1_ttft_s": 3.157
+    },
+    "E1": {
+      "condition": "repeated prefix without a session-affinity header",
+      "later_turns_ttft_s": 0.774,
+      "requests": 36,
+      "success": 36,
+      "turn1_over_later_ratio": 3.975,
+      "turn1_ttft_s": 3.114
+    },
+    "E2": {
+      "condition": "repeated prefix with a stable session-affinity header",
+      "later_turns_ttft_s": 0.617,
+      "requests": 36,
+      "success": 36,
+      "turn1_over_later_ratio": 5.024,
+      "turn1_ttft_s": 3.098
+    },
+    "E3": {
+      "condition": "stable affinity with a changed leading system line",
+      "later_turns_ttft_s": 3.238,
+      "requests": 36,
+      "success": 36,
+      "turn1_over_later_ratio": 0.968,
+      "turn1_ttft_s": 3.132
+    }
+  },
+  "boundary": "accepted evidence supports a latency association only; consistent hashing preserves a stable placement key by configuration, and direct per-request cache attribution was not measured",
+  "method": {
+    "aggregation": "within a repetition, turn 1 is the median across three sessions and turns 2-4 are the median across nine requests; the table reports the median across repetitions; the ratio is computed within each repetition before the median is taken",
+    "flush": "both replica caches flushed before every measured turn",
+    "metric": "TTFT-any: time to the first streamed output event, reasoning or visible",
+    "repetitions": 3,
+    "requests_per_condition": 36,
+    "route": "/v1/chat/completions",
+    "sessions": 3,
+    "streaming": true,
+    "turns": 4
+  },
+  "schema": "b200-glm53-cache-affinity-summary-v1",
+  "total_requests": 144,
+  "total_success": 144
+}

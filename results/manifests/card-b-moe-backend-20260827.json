@@ -1,0 +1,42 @@
+{
+  "boundary": "One TP4/EP4 replica at 32K input, 2,048 output tokens, concurrency 8, 48 requests, low reasoning effort, seed 42. Both backends were verified engaged from boot logs, not merely parsed. The conclusion applies to the tested cell only and does not establish a universal backend ranking.",
+  "campaign": "MoE backend selection: deep_gemm versus flashinfer_trtllm",
+  "campaign_id": "card-b-moe-backend-20260827",
+  "claim_class": "retained-summary-only",
+  "date": "2026-08-27",
+  "environment": {
+    "ep": 4,
+    "gpu": "8x NVIDIA B200, driver 580.173.02",
+    "gpu_visibility": "replica A GPUs 0-3, replica B GPUs 4-7",
+    "image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "ingress": "loopback nginx with session-affine consistent hash on x-claude-code-session-id",
+    "kda_state_slots_per_replica": 446,
+    "kv_capacity_tokens_per_replica": 7362048,
+    "kv_dtype": "fp8_e4m3",
+    "max_running_requests_per_replica": 16,
+    "mem_fraction_static": 0.85,
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a",
+    "moe_backend": "deep_gemm versus flashinfer_trtllm",
+    "ports": "loopback 30000 and 30100",
+    "prefill_chunk_tokens_effective": 16384,
+    "replica_count": 2,
+    "served_model_name": "glm-5.3-flash",
+    "sglang_source_commit": "d6ab04bdf1",
+    "sglang_version": "0.0.0.dev1+gd6ab04bdf1",
+    "speculation": "adaptive NEXTN",
+    "tokenizer_worker_num": 1,
+    "topology": "two independent TP4/EP4 replicas",
+    "tp": 4
+  },
+  "evidence_class": "retained summary records only; request-level rows were not retained",
+  "method": {
+    "boot_evidence": "both backends confirmed engaged from live boot logs",
+    "cell": "32K input, 2,048 output tokens, concurrency 8, 48 requests",
+    "reasoning_effort": "low",
+    "seed": 42
+  },
+  "retained_evidence": "track4-glm53flash-b-20260827",
+  "schema": "b200-glm53-campaign-manifest-v1",
+  "status": "completed"
+}

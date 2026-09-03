@@ -1,0 +1,28 @@
+{
+  "boundary": "Both current /v1/messages routes driven from one client origin across serving, session, interactive coding, trace, and retention panels. The engines, topologies, speculative decoders, regions, ingress paths, and reasoning profiles differ; the comparison is an endpoint observation, not a model-quality or engine-efficiency claim. GLM completed 526/528 serving requests; at the ratio-eligible fixed cells GLM led serial 512K and 1M c1 wall p50 (21.75 s versus 25.31 s; 44.01 s versus 63.09 s) and DSV4 led fixed-decode c8 (59.84 s versus 102.00 s; 115.05 s versus 154.17 s). DSV4 completed exactly 8 of 16 requests in every tested c16 repetition.",
+  "campaign": "Bounded matched GLM-5.3-Flash versus DeepSeek-V4-Flash-0731 endpoint panel",
+  "campaign_id": "track5-glm-vs-dsv4-20260828",
+  "claim_class": "retained-summary-only",
+  "date": "2026-08-28",
+  "environment": {
+    "gpu": "8x NVIDIA B200, driver 580.173.02",
+    "image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "kda_state_slots_per_replica": 446,
+    "kv_capacity_tokens_per_replica": 7362048,
+    "kv_dtype": "fp8_e4m3",
+    "max_running_requests_per_replica": 16,
+    "mem_fraction_static": 0.85,
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a",
+    "prefill_chunk_tokens_effective": 16384,
+    "served_model_name": "glm-5.3-flash",
+    "sglang_source_commit": "d6ab04bdf1",
+    "sglang_version": "0.0.0.dev1+gd6ab04bdf1",
+    "tokenizer_worker_num": "not comparable across endpoints",
+    "topology": "endpoint pair comparison; see boundary"
+  },
+  "evidence_class": "bounded public-safe summary only; separate from single-model configuration selection",
+  "retained_evidence": "track5-glm53f-dsv4-coding-ab-20260828",
+  "schema": "b200-glm53-campaign-manifest-v1",
+  "status": "completed"
+}
