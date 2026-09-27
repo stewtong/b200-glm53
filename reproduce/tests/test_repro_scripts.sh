@@ -9,37 +9,48 @@ FAILS=0
 
 pass() { echo "  PASS: $1"; }
 fail() { echo "  FAIL: $1"; FAILS=$((FAILS + 1)); }
+# check NAME CMD...: PASS when CMD succeeds.
+check() {
+  local name="$1"; shift
+  [ $# -ge 1 ] || { fail "$name (no command)"; return; }
+  if "$@"; then pass "$name"; else fail "$name"; fi
+}
+# check_absent NAME PATTERN FILE: PASS only when grep finds no match (exit 1);
+# a match or a grep error (missing or unreadable file) fails.
+check_absent() {
+  local name="$1" status
+  grep -q -- "$2" "$3"; status=$?
+  if [ "$status" -eq 1 ]; then pass "$name"
+  elif [ "$status" -eq 0 ]; then fail "$name (found: $2)"
+  else fail "$name (grep error $status on $3)"; fi
+}
 
 echo "== shell syntax =="
-bash -n "$HERE/../run-replicas.sh" && pass "run-replicas.sh bash -n" || fail "run-replicas.sh bash -n"
-bash -n "$0" && pass "self bash -n" || fail "self bash -n"
+check "run-replicas.sh bash -n" bash -n "$HERE/../run-replicas.sh"
+check "self bash -n" bash -n "$0"
 
 echo "== exact routes in nginx.conf =="
 for route in /v1/chat/completions /v1/completions /v1/models /v1/messages /v1/messages/count_tokens /v1/responses /ping; do
-  grep -q "location = ${route} " "$HERE/../nginx.conf" && pass "exact location $route" || fail "exact location $route"
+  check "exact location $route" grep -q "location = ${route} " "$HERE/../nginx.conf"
 done
-grep -q 'location / { return 404; }' "$HERE/../nginx.conf" && pass "default 404" || fail "default 404"
-grep -q 'client_max_body_size 32m' "$HERE/../nginx.conf" && pass "32m body cap" || fail "32m body cap"
+check "default 404" grep -q 'location / { return 404; }' "$HERE/../nginx.conf"
+check "32m body cap" grep -q 'client_max_body_size 32m' "$HERE/../nginx.conf"
 
 echo "== no-retry contract =="
-grep -q 'proxy_next_upstream off;' "$HERE/../proxy-common.conf" \
-  && pass "proxy_next_upstream off" || fail "proxy_next_upstream off"
-grep -q 'proxy_buffering off;' "$HERE/../proxy-common.conf" \
-  && pass "proxy_buffering off" || fail "proxy_buffering off"
+check "proxy_next_upstream off" grep -q 'proxy_next_upstream off;' "$HERE/../proxy-common.conf"
+check "proxy_buffering off" grep -q 'proxy_buffering off;' "$HERE/../proxy-common.conf"
 # No inference route may inherit a retry policy from anywhere else.
-grep -q 'proxy_next_upstream' "$HERE/../nginx.conf" \
-  && fail "retry directive leaked into nginx.conf" || pass "no retry directive in nginx.conf"
+check_absent "no retry directive in nginx.conf" 'proxy_next_upstream' "$HERE/../nginx.conf"
 
 echo "== engine command parity =="
 for flag in "--tokenizer-worker-num 4" "--tp-size 4" "--ep-size 4" "--moe-runner-backend flashinfer_trtllm" \
   "--kv-cache-dtype fp8_e4m3" "--speculative-num-steps 5" "--speculative-eagle-topk 1" \
   "--speculative-num-draft-tokens 6" "--max-running-requests 16" "--mem-fraction-static 0.85"; do
   count=$(grep -c -- "$flag" "$HERE/../run-replicas.sh")
-  [ "$count" -ge 2 ] && pass "engine flag $flag present in both replicas" || fail "engine flag $flag (count $count)"
+  check "engine flag $flag present in both replicas (count $count)" [ "$count" -ge 2 ]
 done
-grep -q -- "--chunked-prefill-size" "$HERE/../run-replicas.sh" \
-  && fail "explicit chunk flag present (standing profile relies on the image default)" \
-  || pass "no explicit chunk flag (image boot default 16,384)"
+# The reference configuration relies on the image default chunked-prefill size (16,384).
+check_absent "no explicit chunk flag (image boot default 16,384)" "--chunked-prefill-size" "$HERE/../run-replicas.sh"
 
 echo "== readiness failure exits nonzero =="
 export MODEL_DIR="/tmp/test-model-dir" IMAGE="test-image:latest"
@@ -54,6 +65,7 @@ fi
 
 echo "== mock endpoint service =="
 MOCK_PIDS=()
+# shellcheck disable=SC2317,SC2329  # invoked through trap cleanup EXIT
 cleanup() {
   local pid
   for pid in "${MOCK_PIDS[@]}"; do
