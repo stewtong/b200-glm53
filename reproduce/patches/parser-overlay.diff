@@ -1,0 +1,116 @@
+GLM tool-call parser overlay, in use on the reference service since 2026-09-06.
+
+Base: sgl-project/sglang d6ab04bdf1, files under python/sglang/srt/function_call/.
+Ports the brace and schema handling of sgl-project/sglang#36626 (merged) and
+the closing-tag overlap repair of sgl-project/sglang#24147 (closed, not
+merged). get_schema_properties reads tool properties inside anyOf, oneOf, and
+allOf. The streaming fix keeps the longest buffered suffix that could begin
+the closing tag, and tracks the first parameter explicitly because a trailing
+brace may belong to a nested object value.
+Results: glm47_moe_detector.py SHA-256
+28d5f11e3f0d9811817dd295306d7f43428a604b63f31409a3c1b1cb9e5fa41e, utils.py
+SHA-256 8f04cda38ecd805546442ed8fd3b86d35f054119280790ed211b3bdb05a7cf21.
+
+--- a/python/sglang/srt/function_call/utils.py
++++ b/python/sglang/srt/function_call/utils.py
+@@ -457,3 +457,22 @@
+         return json_schema
+ 
+     return None
++
++
++def get_schema_properties(schema: Any) -> Dict[str, Any]:
++    """Top-level ``properties`` of a tool ``parameters`` schema, descending
++    into ``anyOf``/``oneOf``/``allOf`` branches when the top level declares
++    none (legal JSON Schema, e.g. discriminated-union arguments)."""
++    if not isinstance(schema, dict):
++        return {}
++    properties = schema.get("properties")
++    if isinstance(properties, dict):
++        return properties
++    merged: Dict[str, Any] = {}
++    for keyword in ("anyOf", "oneOf", "allOf"):
++        branches = schema.get(keyword)
++        if isinstance(branches, list):
++            for branch in branches:
++                for key, value in get_schema_properties(branch).items():
++                    merged.setdefault(key, value)
++    return merged
+--- a/python/sglang/srt/function_call/glm47_moe_detector.py
++++ b/python/sglang/srt/function_call/glm47_moe_detector.py
+@@ -17,6 +17,7 @@
+     _GetInfoFunc,
+ )
+ from sglang.srt.function_call.utils import (
++    get_schema_properties,
+     infer_type_from_json_schema,
+     safe_literal_eval,
+ )
+@@ -83,11 +84,7 @@
+         return None
+ 
+     # Navigate to the type using dict.get() for safe access
+-    properties = params.get("properties")
+-    if not isinstance(properties, dict):
+-        return None
+-
+-    arg_spec = properties.get(arg_key)
++    arg_spec = get_schema_properties(params).get(arg_key)
+     if isinstance(arg_spec, dict):
+         # Use the new type inference function for complex JSON Schema support
+         return infer_type_from_json_schema(arg_spec)
+@@ -446,7 +443,19 @@
+                     ) and closing_tag.startswith(self._xml_tag_buffer)
+ 
+                     if not is_potential_closing:
+-                        content = self._xml_tag_buffer
++                        # Retain a suffix that can begin the closing tag.
++                        kept_suffix = ""
++                        for k in range(1, len(self._xml_tag_buffer)):
++                            candidate = self._xml_tag_buffer[k:]
++                            if closing_tag.startswith(candidate):
++                                kept_suffix = candidate
++                                break
++                        content = (
++                            self._xml_tag_buffer[: -len(kept_suffix)]
++                            if kept_suffix
++                            else self._xml_tag_buffer
++                        )
++
+                         # Use cached value type for consistency
+                         value_type = self._cached_value_type or "string"
+ 
+@@ -459,14 +468,12 @@
+                                     1:-1
+                                 ]
+                                 self._current_value += content
+-                                self._xml_tag_buffer = ""
+                         elif value_type == "number":
+                             if content:
+                                 if not self._value_started:
+                                     self._value_started = True
+                                 json_output += content
+                                 self._current_value += content
+-                                self._xml_tag_buffer = ""
+                         else:
+                             # For object/array types, output as-is
+                             if content:
+@@ -474,7 +481,8 @@
+                                     self._value_started = True
+                                 json_output += content
+                                 self._current_value += content
+-                                self._xml_tag_buffer = ""
++
++                        self._xml_tag_buffer = kept_suffix
+ 
+         return json_output
+ 
+@@ -613,7 +621,7 @@
+             self._last_arguments += "{}"
+             self.streamed_args_for_tool[self.current_tool_id] += "{}"
+             self._sent_empty_object = True
+-        elif not self._last_arguments.endswith("}") and not self._sent_empty_object:
++        elif not self._is_first_param and not self._sent_empty_object:
+             # Need to close brace
+             calls.append(
+                 ToolCallItem(

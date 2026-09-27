@@ -125,6 +125,15 @@
       "manifest": "results/manifests/track5-glm-vs-dsv4-20260828.json",
       "public_results": null,
       "status": "completed"
+    },
+    {
+      "campaign": "Same-day holistic campaign: full context and concurrency grid plus matched TP8, BF16 KV, request-cap, and route comparisons",
+      "campaign_id": "holistic-20260927",
+      "claim_class": "public-derivable",
+      "date": "2026-09-27",
+      "manifest": "results/manifests/holistic-20260927.json",
+      "public_results": "results/holistic-20260927/",
+      "status": "partial"
     }
   ],
   "model": {
@@ -144,14 +153,16 @@
   },
   "not_run_or_invalid": [
     {
-      "description": "No accepted matched current-stack dual-TP4-versus-TP8 result exists. The later attempt did not complete an accepted topology cell; Card A is the only topology evidence and carries its configuration mismatch.",
+      "description": "Completed 2026-09-27 as a same-day sequential comparison on the patched configuration; see holistic-20260927. Card A remains historical-selection evidence.",
       "id": "matched-current-stack-tp4-vs-tp8",
-      "status": "not-run"
+      "status": "completed",
+      "superseded_by": "holistic-20260927"
     },
     {
-      "description": "No local BF16-KV correctness control against the published FP8-KV profile. The two GSM8K scores are FP8-KV reasoning-effort conditions, not precision arms.",
+      "description": "Completed 2026-09-27 with concurrent paired arms on the full GSM8K test set; see holistic-20260927.",
       "id": "bf16-kv-control",
-      "status": "not-run"
+      "status": "completed",
+      "superseded_by": "holistic-20260927"
     },
     {
       "description": "No accepted W11 latency or TPOT comparison for request-cap 16 versus 48. The mandatory W6 identifier check stopped the campaign. The bounded scheduler observation is excluded from performance tables because seed, order, response mix, and output-token budget confound a matched conclusion.",
@@ -179,9 +190,10 @@
       "status": "not-run"
     },
     {
-      "description": "No open-loop Poisson or gamma arrival process; all cells used closed-loop concurrency.",
+      "description": "A bounded Poisson ladder ran 2026-09-27 with shortened windows; no gamma arrivals because the pinned bench_serving has no burstiness option.",
       "id": "open-loop-arrivals",
-      "status": "not-run"
+      "status": "partial",
+      "superseded_by": "holistic-20260927"
     },
     {
       "description": "No high-availability or failover test. The reboot rehearsal covered automatic container recovery only.",

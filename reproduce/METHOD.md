@@ -55,6 +55,29 @@ absolute request-start clocks for reconstructing a true batch makespan, and the
 recorded stream events lack per-output-event clocks. These metrics are
 therefore not published rather than published with an unprovable method.
 
+## September 27 campaign metrics
+
+The September 27 records (`results/holistic-20260927/raw/`) keep a monotonic
+dispatch and completion offset for every request within its repetition, so that
+campaign reports three measures. Each repetition at concurrency c dispatches c
+requests at once and waits for all of them; no request is replaced.
+
+- **Burst output rate** = completion tokens of successful requests divided by
+  the span from the first dispatch to the last completion in a repetition. It
+  includes prefill and drain, so at long context it is dominated by prefill and
+  does not measure sustained throughput under continuous load.
+- **Request output rate** = one request's completion tokens divided by its
+  full wall time, including prefill.
+- **TTFT p50** = time to the first streamed output event, reasoning or
+  visible. Grid, TP8, request-cap, and route cells report the median across
+  repetitions of each repetition's median; warm-extension turns report the
+  median across all turns of a kind.
+
+Success adds a no-timeout condition to the rule above. Output length is fixed
+with `ignore_eos` and `max_tokens`. `reproduce/derive-results.py` recomputes
+all three measures, the per-repetition ranges, and the GSM8K paired
+comparison from the rows.
+
 ## Correctness (GSM8K)
 
 The GSM8K evaluation used the full 1,319-problem test set

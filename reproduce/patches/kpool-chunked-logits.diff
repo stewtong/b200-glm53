@@ -1,0 +1,178 @@
+Chunk the K-pool indexer logits in _get_topk_ragged_kpool_plan by query rows.
+
+Base: sgl-project/sglang d6ab04bdf1 (the pinned image), file
+python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py
+(SHA-256 5a841692d4721f9a55a2dbcd1dc39abddfec5fb7a1207922221e9ad93af6eec2).
+Result: SHA-256 89cdb6933ef024d1bc596c016cadd0ca989878964405a2770c9e139c476614f0.
+The September 27 servers ran this diff plus kpool-logits-verify.diff (verify
+mode off), SHA-256 58e59be00ad2bec6bc28901d72c2a53853df2bc9635a9528d23528a1764a107e.
+The code is published exactly as it ran.
+
+Upstream fixed the same defect in sgl-project/sglang#40854 (merged
+2026-09-26), which chunks this path and the per-request path under the
+existing free-memory budget. Prefer an image that includes it.
+
+Scope and caveats of this local diff:
+- Only _get_topk_ragged_kpool_plan is chunked. _get_topk_ragged_kpool and
+  _get_topk_ragged_with_cp still allocate their logits unchunked.
+- Chunking is skipped when get_is_capture_mode() is true. At d6ab04bdf1 that
+  includes breakable CUDA graph segments; #40854 gates on
+  torch.cuda.is_current_stream_capturing() instead. In the reference
+  configuration SGLang disables prefill CUDA graphs for this model ("Breakable
+  CUDA graph is incompatible with KDA hybrid linear attention"), so extend
+  batches run eagerly and the budget applies.
+- Budget: the smaller of SGLANG_DSA_KPOOL_LOGITS_BUDGET_MB (default 4096),
+  half of free plus reusable cached device memory, and 30% of total device
+  memory, applied only when rows x columns reaches 8,000,000 (FP32, 4 bytes
+  per element). Row bytes ignore DeepGEMM's column alignment.
+- The in-code comment "per-row results are unchanged" means each row's scores
+  depend only on that row's inputs. Scores were bit-identical in the check;
+  identical top-k selections were not shown, because the unpatched top-k
+  itself varies on tied scores.
+- No log line records when chunking engages.
+
+--- a/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py
++++ b/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ 
++import os
++
+ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+ 
+ import torch
+@@ -1001,14 +1003,24 @@
+                 scale_out=k_scale,
+             )
+             k_fp8 = k_u8.view(torch.float8_e4m3fn)
+-            logits = deep_gemm.fp8_mqa_logits(
+-                q_fp8[:n_real].contiguous(),
+-                (k_fp8.contiguous(), k_scale.contiguous()),
+-                weights[:n_real].contiguous(),
+-                ks_per_q,
+-                ke_per_q,
+-                clean_logits=True,
++            kv_fp8_full = (k_fp8.contiguous(), k_scale.contiguous())
++            # Local patch: the [n_real, total_k_rows] fp32 logits buffer is not
++            # bounded here (the non-kpool ragged path chunks it). Chunk rows
++            # against a memory budget; per-row results are unchanged.
++            rows_per_chunk = self._kpool_logits_rows_per_chunk(
++                n_real, total_k_rows, device
+             )
++            if rows_per_chunk >= n_real:
++                logits = deep_gemm.fp8_mqa_logits(
++                    q_fp8[:n_real].contiguous(),
++                    kv_fp8_full,
++                    weights[:n_real].contiguous(),
++                    ks_per_q,
++                    ke_per_q,
++                    clean_logits=True,
++                )
++            else:
++                logits = None
+         else:
+             logits = torch.empty((n_real, 0), dtype=torch.float32, device=device)
+ 
+@@ -1032,6 +1044,22 @@
+                 if topk_offsets_all is not None and row_select is not None:
+                     topk_offsets_all = topk_offsets_all.index_select(0, row_select)
+ 
++        if logits is None:
++            return self._topk_from_kpool_logits_chunked(
++                q_fp8,
++                weights,
++                kv_fp8_full,
++                n_real,
++                rows_per_chunk,
++                pool_lens,
++                seq_lens_expanded,
++                page_table_all,
++                topk_offsets_all,
++                ks_per_q,
++                ke_per_q,
++                total_q,
++                page_table_row_index_all,
++            )
+         return self._topk_from_kpool_logits(
+             logits,
+             pool_lens,
+@@ -1043,6 +1071,79 @@
+             page_table_row_index=page_table_row_index_all,
+         )
+ 
++    @staticmethod
++    def _kpool_logits_rows_per_chunk(
++        n_rows: int, n_cols: int, device: torch.device
++    ) -> int:
++        if n_rows * n_cols < 8_000_000 or get_is_capture_mode():
++            return n_rows
++        bytes_per_row = n_cols * 4
++        cap = int(os.environ.get("SGLANG_DSA_KPOOL_LOGITS_BUDGET_MB", "4096")) << 20
++        free_mem, total_mem = torch.cuda.mem_get_info(device)
++        cached_free = torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(
++            device
++        )
++        budget = min(cap, (free_mem + cached_free) // 2, int(total_mem * 0.3))
++        return max(1, min(n_rows, budget // bytes_per_row))
++
++    def _topk_from_kpool_logits_chunked(
++        self,
++        q_fp8: torch.Tensor,
++        weights: torch.Tensor,
++        kv_fp8: Tuple[torch.Tensor, torch.Tensor],
++        n_real: int,
++        rows_per_chunk: int,
++        pool_lens: torch.Tensor,
++        seq_lens: Optional[torch.Tensor],
++        page_table: Optional[torch.Tensor],
++        topk_offsets: Optional[torch.Tensor],
++        row_starts: torch.Tensor,
++        row_ends: torch.Tensor,
++        out_rows: int,
++        page_table_row_index: Optional[torch.Tensor],
++    ) -> torch.Tensor:
++        results = []
++        for start in range(0, n_real, rows_per_chunk):
++            end = min(start + rows_per_chunk, n_real)
++            logits_chunk = deep_gemm.fp8_mqa_logits(
++                q_fp8[start:end].contiguous(),
++                kv_fp8,
++                weights[start:end].contiguous(),
++                row_starts[start:end].contiguous(),
++                row_ends[start:end].contiguous(),
++                clean_logits=True,
++            )
++            chunk_page_table = page_table
++            chunk_row_index = None
++            if page_table is not None:
++                if page_table_row_index is not None:
++                    chunk_row_index = page_table_row_index[start:end]
++                else:
++                    chunk_page_table = page_table[start:end]
++            results.append(
++                self._topk_from_kpool_logits(
++                    logits_chunk,
++                    pool_lens[start:end],
++                    seq_lens=None if seq_lens is None else seq_lens[start:end],
++                    page_table=chunk_page_table,
++                    topk_offsets=(
++                        None if topk_offsets is None else topk_offsets[start:end]
++                    ),
++                    row_starts=row_starts[start:end],
++                    out_rows=None,
++                    page_table_row_index=chunk_row_index,
++                )
++            )
++            del logits_chunk
++        result = torch.cat(results, dim=0)
++        if out_rows == result.shape[0]:
++            return result
++        padded = torch.full(
++            (out_rows, result.shape[1]), -1, dtype=result.dtype, device=result.device
++        )
++        padded[: result.shape[0]] = result
++        return padded
++
+     def _get_topk_ragged_with_cp(
+         self,
+         forward_batch: ForwardBatch,
