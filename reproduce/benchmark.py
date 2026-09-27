@@ -141,6 +141,7 @@ def stream_request(url, key, payload, timeout_s):
                         row["usage_prompt_tokens"] = chunk["usage"].get("prompt_tokens")
                         row["usage_completion_tokens"] = chunk["usage"].get("completion_tokens")
     except urllib.error.HTTPError as e:
+        e.close()  # release the error response body; unclosed, it warns at garbage collection
         row["status"] = e.code
         if e.code == 429:
             row["is_429"] = True
@@ -250,6 +251,7 @@ def main():
                         raise BenchmarkError(
                             f"cache flush returned HTTP {resp.status}")
             except urllib.error.HTTPError as e:
+                e.close()  # as above: release the error response body
                 raise BenchmarkError(f"cache flush returned HTTP {e.code}")
     try:
         run_cell(base, key, args.cell, args.reps, args.timeout, args.output, flush)
