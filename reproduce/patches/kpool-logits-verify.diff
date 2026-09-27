@@ -1,0 +1,124 @@
+Opt-in comparison mode for kpool-chunked-logits.diff. Apply after it.
+
+With SGLANG_DSA_KPOOL_LOGITS_VERIFY=1, every unchunked call in
+_get_topk_ragged_kpool_plan also computes the logits in seven row chunks,
+compares scores (torch.equal) and top-k sets against the unchunked result and
+against a second unpatched top-k run, and logs one WARNING line per call.
+Off by default; with the variable unset it adds one environment lookup per call.
+
+Diagnostic use only: it runs the logits GEMM three times, holds two
+full-size logits buffers at once (the allocation the fix bounds), synchronizes
+the host, and is not guarded against CUDA graph capture. Use it on short
+contexts in a dedicated run. The September 27 servers carried this code with
+the mode off; the September 26 check used it at 32K and 128K.
+
+Result with kpool-chunked-logits.diff applied first: SHA-256
+58e59be00ad2bec6bc28901d72c2a53853df2bc9635a9528d23528a1764a107e.
+
+--- a/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py
++++ b/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import logging
+ import os
+ 
+ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+@@ -29,6 +30,8 @@
+ if is_npu():
+     import custom_ops  # noqa: F401
+ 
++_kpool_logits_logger = logging.getLogger(__name__)
++
+ from sglang.srt.environ import envs
+ from sglang.srt.layers import deep_gemm_wrapper
+ from sglang.srt.layers.attention.dsa.utils import (
+@@ -1060,7 +1063,7 @@
+                 total_q,
+                 page_table_row_index_all,
+             )
+-        return self._topk_from_kpool_logits(
++        result = self._topk_from_kpool_logits(
+             logits,
+             pool_lens,
+             seq_lens=seq_lens_expanded,
+@@ -1070,6 +1073,79 @@
+             out_rows=total_q,
+             page_table_row_index=page_table_row_index_all,
+         )
++        if (
++            total_k_rows > 0
++            and n_real > 1
++            and os.environ.get("SGLANG_DSA_KPOOL_LOGITS_VERIFY") == "1"
++        ):
++            chunked = self._topk_from_kpool_logits_chunked(
++                q_fp8,
++                weights,
++                kv_fp8_full,
++                n_real,
++                max(1, n_real // 7),
++                pool_lens,
++                seq_lens_expanded,
++                page_table_all,
++                topk_offsets_all,
++                ks_per_q,
++                ke_per_q,
++                total_q,
++                page_table_row_index_all,
++            )
++            step = max(1, n_real // 7)
++            logits_chunked = torch.cat(
++                [
++                    deep_gemm.fp8_mqa_logits(
++                        q_fp8[s:min(s + step, n_real)].contiguous(),
++                        kv_fp8_full,
++                        weights[s:min(s + step, n_real)].contiguous(),
++                        ks_per_q[s:min(s + step, n_real)].contiguous(),
++                        ke_per_q[s:min(s + step, n_real)].contiguous(),
++                        clean_logits=True,
++                    )
++                    for s in range(0, n_real, step)
++                ],
++                dim=0,
++            )
++            logits_equal = bool(torch.equal(logits, logits_chunked))
++            del logits_chunked
++            repeat = self._topk_from_kpool_logits(
++                logits,
++                pool_lens,
++                seq_lens=seq_lens_expanded,
++                page_table=page_table_all,
++                topk_offsets=topk_offsets_all,
++                row_starts=ks_per_q,
++                out_rows=total_q,
++                page_table_row_index=page_table_row_index_all,
++            )
++            del logits
++
++            def _row_set_diff(a, b):
++                sa = torch.sort(a, dim=1).values
++                sb = torch.sort(b, dim=1).values
++                neq = sa != sb
++                rows = int(neq.any(dim=1).sum().item())
++                worst = int(neq.sum(dim=1).max().item()) if rows else 0
++                return rows, worst
++
++            rep_rows, rep_worst = _row_set_diff(result, repeat)
++            chk_rows, chk_worst = _row_set_diff(result, chunked)
++            _kpool_logits_logger.warning(
++                "KPOOL_LOGITS_VERIFY rows=%d cols=%d logits_equal=%s "
++                "repeat_diff_rows=%d repeat_worst=%d chunked_diff_rows=%d "
++                "chunked_worst=%d width=%d",
++                n_real,
++                total_k_rows,
++                logits_equal,
++                rep_rows,
++                rep_worst,
++                chk_rows,
++                chk_worst,
++                result.shape[1],
++            )
++        return result
+ 
+     @staticmethod
+     def _kpool_logits_rows_per_chunk(

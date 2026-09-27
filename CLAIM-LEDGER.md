@@ -12,6 +12,13 @@ and where the claim comes from. Classes:
 - **first-party**: a dated operational record from the deployment itself.
 - **invalid / stopped / not-run**: recorded so no reader mistakes them for
   coverage. A planned cell is not evidence that the cell ran.
+- **superseded / partial / unresolved** (not-run table only): a gap later
+  covered by a named campaign, covered in part, or measured without a
+  conclusion.
+
+Rows for the September 27 campaign name the `block` field of
+`results/holistic-20260927/raw/grid-rows.jsonl`: `1A` grid, `2D` TP8/EP8,
+`2B` request cap, `1F-direct` and `1F-proxy` direct and proxied access.
 
 Retained records are cited by their campaign identifiers (for example
 `track4-glm53flash-a-20260826`); the full retained trees are internal and are
@@ -82,22 +89,41 @@ not part of this repository.
 | --- | --- | --- | --- |
 | GLM-5.3-Flash versus DeepSeek-V4-Flash-0731 endpoint panel results (serial 512K/1M c1, fixed-decode c8, session oracles, trace, retention) | retained-summary-only | `track5-glm53f-dsv4-coding-ab-20260828` | Bounded public-safe summary. Different engines, topologies, speculative decoders, regions, and reasoning profiles; an endpoint observation, not a model-quality or configuration-selection claim |
 
+## Same-day campaign (September 27)
+
+| Claim | Class | Source | Boundary |
+| --- | --- | --- | --- |
+| The 40-cell grid (16K-1M input, concurrency 1-16) completed 744/744 requests with HTTP 200, integrity pass, no timeout, and the exact completion length | public-derivable | `results/holistic-20260927/raw/grid-rows.jsonl`, block `1A` | Patched configuration (K-pool chunked logits and parser overlay); the 1M concurrency-16 cell exceeds the per-server KV pool and is stress, not an operating point |
+| Burst output rate, request output rate, and TTFT p50 for every grid, TP8, request-cap, and route cell, with per-repetition ranges | public-derivable | same rows; `results/holistic-20260927/summary.json` | Each repetition is one burst of c requests with no replacement; burst output rate uses first dispatch to last completion and is not sustained throughput; TTFT is the first streamed event, reasoning or visible |
+| Dual TP4/EP4 burst output is 1.19-1.39x TP8/EP8 at 32K concurrency 8-16 and 1.80-2.11x at 128K c16, 512K c8-c16, and 1M c4-c8; at concurrency 1, TP8 is 1-4% slower at 128K and 1M and within repetition spread at 32K | public-derivable | same rows, blocks `1A` and `2D` | Same node and day, run sequentially 3.9 to 5.4 hours apart with different prompts; TP8 used the TP4-selected 16,384-token chunked prefill, cap 32, and KV pool 11,556,672 against 2 × 16 and 2 × 7,362,048; DP attention not tested |
+| Warm extension: turns 2-4 TTFT p50 0.79 s at 128K through 5.07 s at 1M | public-derivable | `results/holistic-20260927/raw/warm-extend-rows.jsonl` | Two sessions per server, 8K appended per turn, stable session header |
+| FP8 and BF16 KV each scored 1,283/1,319 on GSM8K with effort omitted; 1,267 and 1,272 at low effort (exact McNemar p = 0.405) | public-derivable | `results/holistic-20260927/raw/gsm8k-kv-rows.jsonl` | Concurrent arms on separate GPU halves after a 0.99% calibration; no accuracy difference is claimed |
+| BF16 KV boots with 4,101,312 tokens against 7,362,048 for FP8 | first-party | boot logs of the two arms | Same memory fraction, flags, and TRT-LLM DSA backends; only the KV dtype differs |
+| Request cap 48 against 16 at 8, 16, and 24 requests per server | public-derivable | grid rows, block `2B` | The caps differ in behavior only at 24 per server; the cap-48 server also had a smaller KV pool and was slower where no cap bound, so the rows compare complete configurations |
+| Loopback proxy is within 1% of direct engine access in three matched cells | public-derivable | grid rows, blocks `1F-direct` and `1F-proxy` | Proxy overhead only; the public ingress path is untested |
+| The pinned image's unchunked K-pool logits allocation raised a scheduler CUDA out-of-memory error at 1M concurrency 4 on September 26 (29.68 GiB request); the local patch chunks it, as upstream SGLang #40854 does | retained-summary-only | internal run `track4-glm53flash-holistic-run2-20260926` diagnosis and the patch equivalence record | Logit-identity and top-k check at 32K and 128K only: logits bit-identical in 1,152 of 1,152 calls, top-k differing in 466 against 501 for the unpatched kernel run twice, so top-k identity is not shown; the patch keeps the unchunked call during CUDA graph capture; when the chunked path engaged in scored cells and its overhead were not measured |
+| Poisson ladder: completion rate 97.5-100% of offered at 0.1-0.4 requests/s, 89.6% at a 0.8 target | retained-summary-only | internal run `track4-glm53flash-holistic-run3`, `bench_serving` outputs | Shortened windows (236-292 s); bounded observations, not a saturation measurement |
+| Anthropic Messages matrix: 17 of 20 cases passed, one tool-use case was invalid (64-token limit), two failed | retained-summary-only | same internal run | Ran with the parser overlay; the cases are listed in `BENCHMARKS.md` |
+| Stopping one server mid-load: both requests on the other server completed; both streams on the stopped server kept HTTP 200 but ended with no finish reason or usage | retained-summary-only | same internal run, replica-loss rows and proxy error log | `docker stop` of the temporary cap-48 server (SIGTERM, then SIGKILL after the 10 s grace period); tokens stopped within 0.9 s of SIGTERM and the streams closed at the kill with no error event; one observation, not a failover measurement |
+
 ## Not run, stopped, or invalid
 
 | Item | Class | Note |
 | --- | --- | --- |
-| Matched current-stack dual-TP4-versus-TP8 | not-run | The later attempt produced no accepted topology cell |
-| Local BF16-KV control | not-run | Listed so the GSM8K conditions are never read as precision arms |
+| Matched current-stack dual-TP4-versus-TP8 | superseded | Still not run as a matched comparison; a sequential same-day comparison with different prompts and TP4 prefill settings ran September 27. The August attempt produced no accepted topology cell |
+| Local BF16-KV control | superseded | Run September 27 with side-by-side arms; the August GSM8K conditions remain reasoning-effort conditions, not precision arms |
 | W11 request-cap 16 versus 48 performance | stopped | W6 correctness stop; bounded scheduler observation excluded from performance tables because of seed, order, response-mix, and output-token confounds |
 | Engine-to-ingress route comparison | invalid | 31/72 route identities were mutated; not controlled. A later attempt ran zero measured requests |
 | Direct cache-hit attribution | not-run | Latency association only |
 | Maximum capacity or saturation search | not-run | Tested points only |
 | Audited-envelope concurrency above 16 | not-run | |
-| Open-loop Poisson or gamma arrivals | not-run | Closed-loop concurrency only |
+| Open-loop Poisson or gamma arrivals | partial | Bounded Poisson ladder September 27; no gamma arrivals |
 | High-availability or failover test | not-run | Reboot recovery only |
 | Broad multimodal quality or maximum-image-size campaign | not-run | Image support is functional, coverage incomplete |
 | Card D 65,536 chunk | invalid | Timed out; no accepted result |
 | Card A 32K topology arm | not-run | Only the 128K decision records exist |
+| September 27 prefix-cache study | stopped | One turn spent its 64-token budget on reasoning |
+| September 27 KV admission boundary | unresolved | The 1,000,000-token prompt rendered 3.25% long and was excluded; 9 of 24 retrieval requests at 128K-768K reached the 256-token output limit before answering |
 
 ## Unsupported claims (never made)
 

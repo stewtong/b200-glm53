@@ -1,0 +1,117 @@
+{
+  "boundary": "Every serving arm ran the local K-pool patch and the September 6 parser overlay. The request-cap arm split node load evenly, so the caps differ in behavior only at 24 requests per server, and the cap-48 server had a smaller KV pool; the rows compare complete configurations.",
+  "campaign": "Same-day holistic campaign: full context and concurrency grid plus matched TP8, BF16 KV, request-cap, and route comparisons",
+  "campaign_id": "holistic-20260927",
+  "claim_class": "public-derivable",
+  "comparison_arms": {
+    "bf16_kv": {
+      "calibration_median_tpot_difference": "0.99%",
+      "kv_capacity_tokens": 4101312,
+      "topology": "temporary TP4/EP4 server on GPUs 4-7, concurrent with server A"
+    },
+    "request_cap_48": {
+      "calibration_median_tpot_difference": "0.37%, measured with a separate cap-16 temporary server and one 128K request per arm",
+      "kv_capacity_tokens": 6445120,
+      "max_running_requests": 48,
+      "seeds": "arms received different seeds of the same request shape",
+      "topology": "temporary TP4/EP4 server on GPUs 4-7, concurrent with server A"
+    },
+    "tp8": {
+      "kv_capacity_tokens": 11556672,
+      "max_running_requests": 32,
+      "timing": "sequential, 3.9 to 5.4 hours after the grid, different seeds; TP4-selected 16,384-token chunked prefill; DP attention not tested",
+      "topology": "one TP8/EP8 engine on GPUs 0-7"
+    }
+  },
+  "date": "2026-09-27",
+  "environment": {
+    "gpu": "8x NVIDIA B200, driver 580.173.02",
+    "image": "lmsysorg/sglang:glm-5.3-flash@sha256:3a97bd50034ca60c6e6c86b8e36a73675d261f6a5eb71197796aee5175409290",
+    "local_source_changes": {
+      "dsa_indexer_kpool.py": {
+        "diff": "reproduce/patches/kpool-chunked-logits.diff, then reproduce/patches/kpool-logits-verify.diff (opt-in check, off)",
+        "purpose": "chunk K-pool indexer logits rows under a memory budget; independent local equivalent of upstream SGLang #40854 (merged 2026-09-26, not in the pinned image)",
+        "sha256": "58e59be00ad2bec6bc28901d72c2a53853df2bc9635a9528d23528a1764a107e",
+        "sha256_fix_only": "89cdb6933ef024d1bc596c016cadd0ca989878964405a2770c9e139c476614f0"
+      },
+      "function_call/glm47_moe_detector.py": {
+        "diff": "reproduce/patches/parser-overlay.diff",
+        "purpose": "GLM tool-call parsing: SGLang #36626 brace/schema handling and #24147 closing-tag overlap repair",
+        "sha256": "28d5f11e3f0d9811817dd295306d7f43428a604b63f31409a3c1b1cb9e5fa41e"
+      },
+      "function_call/utils.py": {
+        "diff": "reproduce/patches/parser-overlay.diff",
+        "purpose": "same parser overlay",
+        "sha256": "8f04cda38ecd805546442ed8fd3b86d35f054119280790ed211b3bdb05a7cf21"
+      }
+    },
+    "model_repository": "zai-org/GLM-5.3-Flash",
+    "model_revision": "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a",
+    "reference_configuration": {
+      "dsa_backends": "trtllm prefill and decode",
+      "gpu_visibility": "server A GPUs 0-3, server B GPUs 4-7",
+      "kv_capacity_tokens_per_server": 7362048,
+      "kv_dtype": "fp8_e4m3",
+      "max_running_requests_per_server": 16,
+      "mem_fraction_static": 0.85,
+      "moe_runner_backend": "flashinfer_trtllm",
+      "prefill_chunk_tokens_effective": 16384,
+      "speculative": "NEXTN 5 steps, top-k 1, 6 draft tokens",
+      "tokenizer_worker_num": 4,
+      "topology": "two independent TP4/EP4 servers"
+    },
+    "sglang_source_commit": "d6ab04bdf1",
+    "sglang_version": "0.0.0.dev1+gd6ab04bdf1"
+  },
+  "evidence_class": "sanitized request-level records published under results/holistic-20260927/raw/",
+  "incomplete": [
+    {
+      "id": "prefix-cache-study",
+      "note": "first condition: one turn spent its 64-token budget on reasoning with no visible output",
+      "status": "stopped"
+    },
+    {
+      "id": "arrival-ladder-planned-duration",
+      "note": "scored windows 236-292 s against 300 s; bounded observations only",
+      "status": "partial"
+    },
+    {
+      "id": "gamma-arrivals",
+      "note": "pinned bench_serving has no burstiness option",
+      "status": "not-run"
+    },
+    {
+      "id": "anthropic-matrix",
+      "note": "17/20; tool-use budget exhaustion, explicit thinking enabled HTTP 400, 1x1 PNG image block HTTP 500",
+      "status": "partial"
+    },
+    {
+      "id": "kv-admission-boundary",
+      "note": "both arms admitted 1,032,485-token prompts; the 1,000,000-token step rendered 3.25% long and was excluded; 9 of 24 retrieval requests at 128K-768K reached the 256-token output limit before answering, and every request that finished returned the needle",
+      "status": "unresolved"
+    },
+    {
+      "id": "replica-loss-observation",
+      "note": "stopping the temporary cap-48 server mid-load: both requests on server A completed; both streams on the stopped server kept HTTP 200 and ended with no finish reason or usage",
+      "status": "observed"
+    }
+  ],
+  "method": {
+    "aggregate_output": "burst output rate: each repetition dispatches all requests at once with no replacement; completion tokens over first dispatch to last completion, including prefill and drain; not sustained throughput",
+    "cache_flush": "both caches flushed before every repetition",
+    "concurrency": "node total split evenly across servers; concurrency 1 on server A",
+    "corpus": "reproduce/corpus-federalist.txt, cache-busted per request by seed",
+    "fixed_output_length": "ignore_eos with max_tokens set to the requested length",
+    "reasoning_effort": "low",
+    "repetitions": 3,
+    "request_output_rate": "completion tokens over the request's full wall time, including prefill",
+    "route": "/v1/chat/completions, streamed",
+    "success_rule": "HTTP 200, integrity pass, no timeout, and the exact requested completion length",
+    "temperature": 0,
+    "ttft": "time to the first streamed output event, reasoning or visible; median across repetitions of per-repetition medians"
+  },
+  "public_results": "results/holistic-20260927/",
+  "retained_evidence": "track4-glm53flash-holistic-run3",
+  "schema": "b200-glm53-campaign-manifest-v1",
+  "status": "partial"
+}

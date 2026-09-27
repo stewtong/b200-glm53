@@ -44,6 +44,34 @@ sglang serve --model-path /model --tp-size 4 --ep-size 4 --base-gpu-id {0|4} \
 
 The pinned image starts each replica with an FP8 E4M3 KV cache holding 7,362,048 tokens (48.57 GB), 446 KDA/Mamba state slots, a chunked prefill size of 16,384 tokens, and a maximum of 16 running requests. The chunked prefill size comes from the image default; the command does not set `--chunked-prefill-size`. Do not set a server-wide `reasoning_effort` through `--default-chat-template-kwargs`. The deployment accepts effort per request, and an omitted value uses the checkpoint template's `max` setting.
 
+On the pinned image, two 1M-token prompts in one prefill step made the sparse-attention indexer request a 29.68 GiB FP32 buffer; the scheduler hit a CUDA out-of-memory error and stopped generating while the HTTP server kept answering. [SGLang #40854](https://github.com/sgl-project/sglang/pull/40854), merged September 26, 2026, fixes this upstream; no image containing it was tested here. The September 27 results in `BENCHMARKS.md` were measured on the pinned image with an independent local fix (`reproduce/patches/kpool-chunked-logits.diff`) and a tool-call parser overlay (`reproduce/patches/parser-overlay.diff`). `run-replicas.sh` applies neither. To rebuild the measured files from the pinned image, run this from the repository root. `kpool-logits-verify.diff` adds only an opt-in check that stays off unless `SGLANG_DSA_KPOOL_LOGITS_VERIFY=1`; it is applied here because the measured file included it. `sha256sum -c` exits nonzero on any mismatch.
+
+```bash
+S=python/sglang/srt
+mkdir -p patched/$S/layers/attention/dsa patched/$S/function_call
+cid=$(docker create "$IMAGE")
+for f in layers/attention/dsa/dsa_indexer_kpool.py function_call/glm47_moe_detector.py function_call/utils.py; do
+  docker cp "$cid:/sgl-workspace/sglang/$S/$f" "patched/$S/$f"
+done
+docker rm "$cid"
+(cd patched && for d in kpool-chunked-logits kpool-logits-verify parser-overlay; do
+  patch -p1 < "../reproduce/patches/$d.diff" || exit 1
+done)
+sha256sum -c - <<EOF
+58e59be00ad2bec6bc28901d72c2a53853df2bc9635a9528d23528a1764a107e  patched/$S/layers/attention/dsa/dsa_indexer_kpool.py
+28d5f11e3f0d9811817dd295306d7f43428a604b63f31409a3c1b1cb9e5fa41e  patched/$S/function_call/glm47_moe_detector.py
+8f04cda38ecd805546442ed8fd3b86d35f054119280790ed211b3bdb05a7cf21  patched/$S/function_call/utils.py
+EOF
+```
+
+Then add these flags to both server `docker run` commands in `run-replicas.sh`, with `PATCHED_DIR` set to the absolute path of `patched/`:
+
+```text
+-v "$PATCHED_DIR/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer_kpool.py:ro"
+-v "$PATCHED_DIR/python/sglang/srt/function_call/glm47_moe_detector.py:/sgl-workspace/sglang/python/sglang/srt/function_call/glm47_moe_detector.py:ro"
+-v "$PATCHED_DIR/python/sglang/srt/function_call/utils.py:/sgl-workspace/sglang/python/sglang/srt/function_call/utils.py:ro"
+```
+
 `reproduce/nginx.conf` and `reproduce/proxy-common.conf` define the loopback proxy. They use exact-match locations for seven routes, consistent hashing on `x-claude-code-session-id`, `proxy_buffering off`, a 32 MiB body limit, 3,000-second upstream timeouts, and `proxy_next_upstream off`. A dispatched inference request is therefore not retried on the other replica. nginx binds to loopback only; place an authenticated TLS-terminating ingress in front of it and keep bearer keys outside the repository. Consistent hashing is not load-aware and can send too many heavy sessions to one replica. Use a load-aware proxy if the workload requires it.
 
 ## Verify the service
@@ -72,7 +100,7 @@ The generation probe requires visible response text. HTTP 200 alone can hide a r
 
 | Reference setting | Selected by | Benchmark record |
 | --- | --- | --- |
-| Two TP4/EP4 replicas | 128K topology cell (historical) | [Topology](BENCHMARKS.md#why-dual-tp4ep4-historical-topology-selection); both arms used a different MoE backend and speculative decoding policy from the reference configuration, and no matched current-stack TP4-versus-TP8 cell exists |
+| Two TP4/EP4 replicas | 128K topology cell (historical) | [Topology](BENCHMARKS.md#why-dual-tp4ep4-historical-topology-selection), measured with a different MoE backend; a sequential September 27 [TP8/EP8 comparison](BENCHMARKS.md#same-day-tp8ep8-against-dual-tp4ep4) under the reference flags is consistent with this choice |
 | `flashinfer_trtllm` MoE | 32K backend cell | [MoE backend](BENCHMARKS.md#moe-backend-selection) |
 | Static NEXTN speculative decoding: 5 steps, top-k 1, 6 draft tokens | 32K synthetic cell and a later replay of captured request shapes | [Speculative decoding](BENCHMARKS.md#speculative-decoding) |
 | Chunked prefill size of 16,384 tokens | 128K and 400K chunk sweep | [Chunked prefill](BENCHMARKS.md#prefill-chunk-selection) |
@@ -83,7 +111,9 @@ The generation probe requires visible response text. HTTP 200 alone can hide a r
 
 The August 28 serving benchmark tested six combinations of input length and request concurrency, with three runs each: about 131K input tokens at concurrency 1 and 16, about 410K at concurrency 8, about 524K at concurrency 16 with 2,048 output tokens, and about 1M at concurrency 1 and 4 with 512 output tokens. All 138 requests returned HTTP 200 and the requested number of output tokens, with zero timeouts and zero HTTP 429 responses. At concurrency 1, output tokens divided by end-to-end latency, including prefill, had a median of 245.29 tok/s at about 131K input tokens and 12.50 tok/s at about 1M. Aggregate output token throughput, time per output token (TPOT), and inter-token latency (ITL) are not reported because the retained timestamps cannot calculate them.
 
-Sanitized request-level records reproduce every reported value:
+A September 27 campaign ran the patched reference configuration through a full grid: 16K to 1M input at concurrency 1 to 16, 744 requests, all successful. Each repetition sends one burst of requests at once. The burst output rate at concurrency 16 fell from 2,242.8 tok/s at 16K to 835.8 tok/s at 128K; at 1M it was 26.8 tok/s at concurrency 8 (512 output tokens). The 128K concurrency-1 rate was 249.39 tok/s, and the 1M concurrency-1 rate was 11.84 tok/s with a 40.60 s TTFT. The same campaign measured TP8/EP8, BF16 KV, request cap 48, and the loopback proxy against the reference configuration; see [BENCHMARKS.md](BENCHMARKS.md#same-day-campaign-on-the-patched-reference-configuration-september-27).
+
+The sanitized request-level records re-derive every value that `CLAIM-LEDGER.md` classes as public-derivable:
 
 ```bash
 python3 reproduce/derive-results.py            # verify staged summaries
@@ -158,15 +188,15 @@ Context arithmetic: input and output share the 1,048,576-token model limit. Set 
 
 Reasoning effort: set `reasoning_effort` on every OpenAI request (`low` for direct answers, `high` for harder tasks). An omitted value resolves to the checkpoint template default of `max` on this deployment and can spend much of the output budget on reasoning. Use Claude Code's default adaptive-thinking profile; explicit `thinking: disabled` can place reasoning in the visible text, and explicit `thinking: enabled` returns HTTP 400 on this runtime.
 
-Images: the runtime accepts image input. Serialized request bytes count against the 32 MiB nginx body limit, and processed visual tokens count against the model context. Test both limits with your media sizes. Image input was not tested across every client or request shape.
+Images: the runtime accepts image input. Serialized request bytes count against the 32 MiB nginx body limit, and processed visual tokens count against the model context. Test both limits with your media sizes. Image input was not tested across every client or request shape. In the September 27 Anthropic Messages matrix, a 1×1-pixel PNG image block returned HTTP 500.
 
 Streaming and limits: keep `proxy_buffering off`; without it the first byte arrives only after full generation. Use a client timeout of at least 180 seconds for large requests. nginx returns its default error bodies for 401, 404, 413, 429, 502, and 504 responses.
 
 ## Limits of the measurements
 
-- The tested load matrix does not establish maximum capacity. No saturation search ran, and no measured cell exceeded concurrency 16.
-- Aggregate output token throughput and TPOT are not reported because the retained timestamps cannot calculate them. `CLAIM-LEDGER.md` records these missing metrics.
-- No matched current-stack TP4-versus-TP8 cell, no local BF16-KV control, no accepted W11 request-cap comparison, no accepted route comparison, and no direct cache-hit attribution exist. `BENCHMARKS.md` records each so partial coverage is visible.
+- The tested load matrix does not establish maximum capacity. The September 27 Poisson ladder is bounded by shortened windows, and the 1M concurrency-16 cell exceeds the per-server KV pool by design.
+- Wall-clock burst output rates are reported for the September 27 campaign only. The August 28 envelope records lack the timestamps to calculate aggregate throughput, and the August 27 ladder's aggregate figures use decode-window rates; `CLAIM-LEDGER.md` records these limits.
+- The September 27 request-cap comparison compares complete server configurations and exceeds the cap at one load point. The public ingress path and the KV admission boundary remain unmeasured, and per-request cache attribution was measured only for the sequential warm-extension turns. `BENCHMARKS.md` records each so partial coverage is visible.
 - Maximum memory-limited concurrency at 128K input is unmeasured because the configured 16-request limit applies first.
 
 ## Repository contents

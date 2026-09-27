@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import json
+import math
 import statistics
 import sys
 from collections import defaultdict
@@ -65,7 +66,15 @@ def load_jsonl(path):
     return rows
 
 
-def check_fields(rows, fields, label):
+LEGACY_OPTIONAL = (
+    "seed", "prompt_chars", "ttft_any_s", "finish_reason",
+    "usage_prompt_tokens", "timeout", "is_429",
+    "turn_target_tokens", "wall_s", "finish", "prompt_tokens",
+    "completion_tokens", "landed_replica", "affinity_present",
+)
+
+
+def check_fields(rows, fields, label, optional=LEGACY_OPTIONAL):
     for i, r in enumerate(rows):
         for name, typ in fields.items():
             if name not in r:
@@ -81,12 +90,7 @@ def check_fields(rows, fields, label):
         for name in r:
             if name == "error" or name == "ttft_any_s" and r[name] is None:
                 continue
-            if name not in fields and name not in (
-                "seed", "prompt_chars", "ttft_any_s", "finish_reason",
-                "usage_prompt_tokens", "timeout", "is_429",
-                "turn_target_tokens", "wall_s", "finish", "prompt_tokens",
-                "completion_tokens", "landed_replica", "affinity_present",
-            ):
+            if name not in fields and name not in optional:
                 raise DerivationError(f"{label} row {i}: unexpected field {name}")
 
 
@@ -353,6 +357,266 @@ def derive_tokenizer_workers(raw):
     }
 
 
+HOLISTIC_GRID_FIELDS = {
+    "benchmark_id": str, "block": str, "cell": str, "repetition": int,
+    "request_index": int, "replica": str, "requested_prompt_tokens": int,
+    "prompt_tokens": int, "requested_completion_tokens": int,
+    "completion_tokens": int, "status": int, "integrity_ok": bool,
+    "timeout": bool, "ttft_any_s": float, "dispatch_offset_s": float,
+    "end_offset_s": float,
+}
+HOLISTIC_GRID_OPTIONAL = ("seed", "finish_reason", "ttft_visible_s")
+HOLISTIC_WARM_FIELDS = {
+    "context": str, "repetition": int, "session": int, "turn": int,
+    "replica": str, "prompt_tokens": int, "completion_tokens": int,
+    "status": int, "integrity_ok": bool, "timeout": bool,
+    "ttft_any_s": float, "cached_tokens_delta": float,
+}
+HOLISTIC_WARM_OPTIONAL = (
+    "context_tokens_target", "append_tokens_target", "finish_reason", "ttft_visible_s")
+HOLISTIC_GSM8K_FIELDS = {
+    "arm": str, "condition": str, "index": int, "max_tokens": int,
+    "status": int, "completion_limit_hit": bool, "extraction_valid": bool,
+    "correct": bool,
+}
+HOLISTIC_GSM8K_OPTIONAL = (
+    "reasoning_effort", "finish_reason", "completion_tokens", "extracted_value", "gold_value")
+
+# The 40-cell grid (8 inputs x 5 concurrencies) plus five extra 1A cells:
+# longer outputs, 1M with 2,048 output tokens, and a server-B cross-check.
+_GRID_INPUTS = ("16k", "32k", "64k", "128k", "256k", "400k", "512k", "1m")
+HOLISTIC_1A_CELLS = {
+    f"G{ctx}-c{n}{'A' if n == 1 else ''}-o{'512' if ctx == '1m' else '2048'}"
+    for ctx in _GRID_INPUTS for n in (1, 2, 4, 8, 16)
+} | {"G128k-c1A-o8192", "G128k-c8-o8192", "G32k-c16-o8192", "G1m-c4-o2048", "G128k-c1B-o2048"}
+HOLISTIC_CELL_COUNTS = {"1A": len(HOLISTIC_1A_CELLS), "1F-direct": 3, "1F-proxy": 3,
+                        "2B": 6, "2B-calibration": 1, "2D": 10}
+# The server-B cross-check ran once; every other cell ran three repetitions.
+HOLISTIC_SINGLE_REP_CELLS = {("1A", "G128k-c1B-o2048")}
+WARM_CONTEXTS = {"128k", "256k", "512k", "1m"}
+WARM_COMPLETION_TOKENS = 512
+WARM_TURNS_PER_CONTEXT = 48  # 3 repetitions x 2 servers x 2 sessions x 4 turns
+GSM8K_TEST_ITEMS = 1319
+GSM8K_ARMS = {"fp8", "bf16"}
+Z95 = 1.96
+
+
+def grid_success(r):
+    """HTTP 200, intact output, no timeout, and the exact requested completion length."""
+    return bool(r["status"] == 200 and r["integrity_ok"] is True and not r["timeout"]
+                and r["completion_tokens"] == r["requested_completion_tokens"])
+
+
+def wilson_interval(k, n, z=Z95):
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return [round(c - h, 4), round(c + h, 4)]
+
+
+def mcnemar_exact_p(b, c):
+    """Two-sided exact McNemar p-value for b and c discordant pairs."""
+    n = b + c
+    if n == 0:
+        return 1.0
+    tail = sum(math.comb(n, j) for j in range(min(b, c) + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+def _grid_group(rows):
+    """Burst output rate, request output rate, and TTFT medians per repetition.
+
+    Callers pass only successful rows (derive_holistic rejects any failure).
+    """
+    by_rep = defaultdict(list)
+    for r in rows:
+        by_rep[r["repetition"]].append(r)
+    reps = []
+    for rep in sorted(by_rep):
+        g = by_rep[rep]
+        span = max(r["end_offset_s"] for r in g) - min(r["dispatch_offset_s"] for r in g)
+        reps.append({
+            "repetition": rep, "requests": len(g),
+            "aggregate_output_tps": round(sum(r["completion_tokens"] for r in g) / span, 2),
+            "median_request_output_tps": round(statistics.median(
+                r["completion_tokens"] / (r["end_offset_s"] - r["dispatch_offset_s"]) for r in g), 2),
+            "median_ttft_any_s": round(statistics.median(r["ttft_any_s"] for r in g), 3),
+        })
+    rates = [e["aggregate_output_tps"] for e in reps]
+    return {
+        "success": f"{len(rows)}/{len(rows)}",
+        "repetitions": reps,
+        "median_aggregate_output_tps": round(statistics.median(rates), 2),
+        "range_aggregate_output_tps": [min(rates), max(rates)],
+        "median_request_output_tps": round(statistics.median(e["median_request_output_tps"] for e in reps), 2),
+        "median_ttft_any_s": round(statistics.median(e["median_ttft_any_s"] for e in reps), 3),
+    }
+
+
+def _derive_grid(grid_rows, arms, cell_counts):
+    check_fields(grid_rows, HOLISTIC_GRID_FIELDS, "holistic grid", HOLISTIC_GRID_OPTIONAL)
+    ids = [r["benchmark_id"] for r in grid_rows]
+    if len(ids) != len(set(ids)):
+        raise DerivationError("holistic grid: duplicate benchmark_id")
+    by_cell = defaultdict(list)
+    for r in grid_rows:
+        by_cell[(r["block"], r["cell"])].append(r)
+    blocks = defaultdict(dict)
+    for (block, cell), rs in sorted(by_cell.items()):
+        reps = sorted({r["repetition"] for r in rs})
+        expected = [1] if (block, cell) in HOLISTIC_SINGLE_REP_CELLS else [1, 2, 3]
+        if reps != expected:
+            raise DerivationError(f"{block} {cell}: repetitions {reps} != {expected}")
+        per_rep = {rep: sorted(r["request_index"] for r in rs if r["repetition"] == rep) for rep in reps}
+        if len({len(idx) for idx in per_rep.values()}) != 1:
+            raise DerivationError(f"{block} {cell}: unequal request counts per repetition")
+        if any(idx != list(range(len(idx))) for idx in per_rep.values()):
+            raise DerivationError(f"{block} {cell}: request indices not contiguous")
+        if len({r["requested_completion_tokens"] for r in rs}) != 1:
+            raise DerivationError(f"{block} {cell}: mixed requested completion lengths")
+        failed = [r["benchmark_id"] for r in rs if not grid_success(r)]
+        if failed:
+            raise DerivationError(f"{block} {cell}: unsuccessful requests {failed[:3]}")
+        missing_arm = {r["replica"] for r in rs if f"{block}:{r['replica']}" not in arms}
+        if missing_arm:
+            raise DerivationError(f"{block} {cell}: no arm metadata for replicas {sorted(missing_arm)}")
+        entry = {
+            "input_tokens_rendered": [min(r["prompt_tokens"] for r in rs), max(r["prompt_tokens"] for r in rs)],
+            "requests_per_repetition": len(per_rep[reps[0]]),
+            "output_tokens_per_request": rs[0]["requested_completion_tokens"],
+            "replicas": sorted({r["replica"] for r in rs}),
+        }
+        entry.update(_grid_group(rs))
+        if block == "2B":
+            entry["by_arm"] = {rep: _grid_group([r for r in rs if r["replica"] == rep])
+                               for rep in sorted({r["replica"] for r in rs})}
+        blocks[block][cell] = entry
+    if cell_counts is not None:
+        got = {block: len(cells) for block, cells in blocks.items()}
+        if got != cell_counts:
+            raise DerivationError(f"holistic grid: cells per block {got} != {cell_counts}")
+        if set(blocks["1A"]) != HOLISTIC_1A_CELLS:
+            raise DerivationError(
+                f"holistic grid: 1A cell names differ: {sorted(set(blocks['1A']) ^ HOLISTIC_1A_CELLS)}")
+    return dict(blocks)
+
+
+def _derive_warm(warm_rows, require_all_contexts):
+    check_fields(warm_rows, HOLISTIC_WARM_FIELDS, "warm-extend", HOLISTIC_WARM_OPTIONAL)
+    contexts = {r["context"] for r in warm_rows}
+    if require_all_contexts and contexts != WARM_CONTEXTS:
+        raise DerivationError(f"warm-extend: contexts {sorted(contexts)} != {sorted(WARM_CONTEXTS)}")
+    warm = {}
+    for ctx in sorted(contexts):
+        rs = [r for r in warm_rows if r["context"] == ctx]
+        keys = [(r["repetition"], r["replica"], r["session"], r["turn"]) for r in rs]
+        if len(keys) != len(set(keys)):
+            raise DerivationError(f"warm-extend {ctx}: duplicate (repetition, replica, session, turn)")
+        if require_all_contexts and len(rs) != WARM_TURNS_PER_CONTEXT:
+            raise DerivationError(f"warm-extend {ctx}: {len(rs)} turns, expected {WARM_TURNS_PER_CONTEXT}")
+        bad = [k for r, k in zip(rs, keys)
+               if not (r["status"] == 200 and r["integrity_ok"] and not r["timeout"]
+                       and r["completion_tokens"] == WARM_COMPLETION_TOKENS)]
+        if bad:
+            raise DerivationError(f"warm-extend {ctx}: unsuccessful turns {bad[:3]}")
+        later = [r for r in rs if r["turn"] > 1]
+        cached = [r["cached_tokens_delta"] / r["prompt_tokens"] for r in later]
+        warm[ctx] = {
+            "requests": len(rs),
+            "turn1_ttft_any_p50_s": round(statistics.median(r["ttft_any_s"] for r in rs if r["turn"] == 1), 3),
+            "later_turns_ttft_any_p50_s": round(statistics.median(r["ttft_any_s"] for r in later), 3),
+            "later_turns_ttft_visible_p50_s": round(statistics.median(
+                r["ttft_visible_s"] for r in later if r.get("ttft_visible_s") is not None), 3),
+            "later_turns_ttft_any_max_s": round(max(r["ttft_any_s"] for r in later), 3),
+            "later_turns_cached_fraction_range": [round(min(cached), 3), round(max(cached), 3)],
+        }
+    return warm
+
+
+def _derive_gsm8k(gsm_rows):
+    check_fields(gsm_rows, HOLISTIC_GSM8K_FIELDS, "gsm8k", HOLISTIC_GSM8K_OPTIONAL)
+    table = defaultdict(dict)
+    for r in gsm_rows:
+        if r["arm"] not in GSM8K_ARMS:
+            raise DerivationError(f"gsm8k: unexpected arm {r['arm']}")
+        if r["correct"] != (r["extraction_valid"] is True and r.get("extracted_value") == r.get("gold_value")):
+            raise DerivationError(f"gsm8k {r['arm']} {r['condition']} item {r['index']}: correct flag disagrees")
+        items = table[(r["arm"], r["condition"])]
+        if r["index"] in items:
+            raise DerivationError(f"gsm8k {r['arm']} {r['condition']}: duplicate item {r['index']}")
+        items[r["index"]] = r
+    kv = {}
+    for cond in sorted({c for _, c in table}):
+        if ("fp8", cond) not in table or ("bf16", cond) not in table:
+            raise DerivationError(f"gsm8k {cond}: both arms required")
+        f, b = table[("fp8", cond)], table[("bf16", cond)]
+        if set(f) != set(range(GSM8K_TEST_ITEMS)) or set(b) != set(f):
+            raise DerivationError(f"gsm8k {cond}: arms must each cover items 0-{GSM8K_TEST_ITEMS - 1}")
+        arm_out = {}
+        for arm, t in (("fp8", f), ("bf16", b)):
+            k = sum(1 for r in t.values() if r["correct"])
+            arm_out[arm] = {
+                "correct": k, "total": len(t), "accuracy": round(k / len(t), 4),
+                "wilson95": wilson_interval(k, len(t)),
+                "invalid_extractions": sum(1 for r in t.values() if not r["extraction_valid"]),
+                "completion_limit_hits": sum(1 for r in t.values() if r["completion_limit_hit"]),
+                "non_200": sum(1 for r in t.values() if r["status"] != 200),
+            }
+        only_f = sum(1 for i in f if f[i]["correct"] and not b[i]["correct"])
+        only_b = sum(1 for i in f if b[i]["correct"] and not f[i]["correct"])
+        n = len(f)
+        diff = (only_b - only_f) / n
+        # Wald interval for a paired difference in proportions.
+        se = math.sqrt((only_f + only_b) - (only_b - only_f) ** 2 / n) / n
+        kv[cond] = {
+            "max_tokens": next(iter(f.values()))["max_tokens"], "arms": arm_out,
+            "bf16_minus_fp8_accuracy": round(diff, 4),
+            "bf16_minus_fp8_wald95": [round(diff - Z95 * se, 4), round(diff + Z95 * se, 4)],
+            "discordant_fp8_only": only_f, "discordant_bf16_only": only_b,
+            "mcnemar_exact_two_sided_p": round(mcnemar_exact_p(only_f, only_b), 3),
+        }
+    return kv
+
+
+def derive_holistic(grid_rows, warm_rows, gsm_rows, arms, cell_counts=HOLISTIC_CELL_COUNTS):
+    """September 27, 2026 campaign: grid, TP8, request cap, direct versus proxy,
+    warm extension, and KV precision. Pass cell_counts=None to skip the
+    whole-campaign coverage checks (self-test fixtures)."""
+    full = cell_counts is not None
+    return {
+        "schema": "b200-glm53-holistic-summary-v1",
+        "campaign": "Same-day holistic campaign on one 8x B200 node, 2026-09-27",
+        "request_contract": {
+            "route": "/v1/chat/completions", "stream": True, "temperature": 0,
+            "reasoning_effort": "low", "fixed_output_length": "ignore_eos with max_tokens",
+            "cache_flush": "both servers' prefix caches flushed before every repetition",
+            "corpus": "reproduce/corpus-federalist.txt, cache-busted per request by seed",
+        },
+        "metrics": {
+            "aggregate_output_tps": (
+                "burst output rate: each repetition dispatches all of its requests at once with no "
+                "replacement; completion tokens over the span from first dispatch to last completion, "
+                "including prefill and drain"),
+            "median_request_output_tps": (
+                "median across repetitions of the per-repetition median, over requests, of completion "
+                "tokens over that request's full wall time, including prefill"),
+            "median_ttft_any_s": (
+                "median across repetitions of the per-repetition median time to the first streamed "
+                "output event, reasoning or visible"),
+            "success": "HTTP 200, integrity pass, no timeout, and the exact requested completion length",
+            "bf16_minus_fp8_wald95": "Wald 95% interval for the paired accuracy difference",
+        },
+        "arms": arms,
+        "blocks": _derive_grid(grid_rows, arms, cell_counts),
+        "warm_extend": _derive_warm(warm_rows, full),
+        "kv_precision_gsm8k": _derive_gsm8k(gsm_rows),
+        "boundary": (
+            "Every serving arm ran the local chunked K-pool indexer patch and the September 6 "
+            "parser overlay. 2B split each node load evenly across the two arms, so each arm saw "
+            "concurrency 8, 16, and 24; the two request caps differ in behavior only at 24."),
+    }
+
 def canonical(obj):
     return json.dumps(obj, indent=2, sort_keys=True) + "\n"
 
@@ -368,7 +632,13 @@ def run(root, write=False):
     with open(results / "tokenizer-workers/raw/tokenizer-worker-ab.json") as f:
         p2a_raw = json.load(f)
 
+    hol = results / "holistic-20260927/raw"
+    with open(hol / "arms.json") as f:
+        hol_arms = json.load(f)
     outputs = {
+        "holistic-20260927/summary.json": derive_holistic(
+            load_jsonl(hol / "grid-rows.jsonl"), load_jsonl(hol / "warm-extend-rows.jsonl"),
+            load_jsonl(hol / "gsm8k-kv-rows.jsonl"), hol_arms),
         "serving-envelope/summary.json": derive_serving_envelope(serve_rows),
         "cache-affinity/summary.json": derive_cache_affinity(cache_rows, flush),
         "config-selection/summary.json": derive_config_selection(cfg_raw),
@@ -451,15 +721,54 @@ def self_test():
         else:
             print(f"  fixture FAIL: {name}")
             failures += 1
-    failures = 0
-    for name, rows, needle in cases:
+    good_grid = {
+        "benchmark_id": "1A/G16k-c1A-o2048/r1/0", "block": "1A", "cell": "G16k-c1A-o2048",
+        "repetition": 1, "request_index": 0, "replica": "A", "requested_prompt_tokens": 16000,
+        "prompt_tokens": 15990, "requested_completion_tokens": 2048, "completion_tokens": 2048,
+        "status": 200, "integrity_ok": True, "timeout": False, "ttft_any_s": 0.5,
+        "dispatch_offset_s": 0.0, "end_offset_s": 8.0,
+    }
+    three_reps = [dict(good_grid, repetition=r, benchmark_id=f"x{r}") for r in (1, 2, 3)]
+    good_warm = {
+        "context": "128k", "repetition": 1, "session": 0, "turn": 2, "replica": "A",
+        "prompt_tokens": 136000, "completion_tokens": 512, "status": 200, "integrity_ok": True,
+        "timeout": False, "ttft_any_s": 0.8, "cached_tokens_delta": 128000.0,
+    }
+    good_gsm = {
+        "arm": "fp8", "condition": "low", "index": 0, "max_tokens": 1024, "status": 200,
+        "completion_limit_hit": False, "extraction_valid": True, "correct": True,
+        "extracted_value": 18, "gold_value": 18,
+    }
+    arms = {"1A:A": {"topology": "dual TP4/EP4"}}
+
+    def grid(rows):
+        return lambda: derive_holistic(rows, [], [], arms, cell_counts=None)
+
+    holistic_cases = [
+        ("holistic duplicate request identity", grid([good_grid, dict(good_grid)]), "duplicate"),
+        ("holistic missing repetitions", grid([good_grid]), "repetitions"),
+        ("holistic truncated completion",
+         grid([dict(r, completion_tokens=1024) if r["repetition"] == 2 else r for r in three_reps]),
+         "unsuccessful"),
+        ("holistic unexpected field", grid([dict(good_grid, route_label="x")]), "unexpected field"),
+        ("holistic unequal requests per repetition",
+         grid(three_reps + [dict(good_grid, repetition=1, request_index=1, benchmark_id="x1b")]),
+         "unequal request counts"),
+        ("warm truncated turn",
+         lambda: derive_holistic([], [dict(good_warm, completion_tokens=500)], [], arms, cell_counts=None),
+         "unsuccessful turns"),
+        ("gsm8k correct flag disagrees",
+         lambda: derive_holistic([], [], [dict(good_gsm, extracted_value=17)], arms, cell_counts=None),
+         "correct flag disagrees"),
+        ("gsm8k missing arm",
+         lambda: derive_holistic([], [], [good_gsm], arms, cell_counts=None), "both arms required"),
+        ("gsm8k unexpected arm",
+         lambda: derive_holistic([], [], [dict(good_gsm, arm="int4")], arms, cell_counts=None),
+         "unexpected arm"),
+    ]
+    for name, call, needle in holistic_cases:
         try:
-            if name == "configuration mismatch arm":
-                derive_cache_affinity(rows, {})
-            elif name == "unexpected cell shape":
-                derive_serving_envelope(rows)
-            else:
-                derive_serving_envelope(rows)
+            call()
         except DerivationError as e:
             if needle in str(e):
                 print(f"  fixture PASS (fails closed): {name}")
@@ -468,6 +777,15 @@ def self_test():
                 failures += 1
         else:
             print(f"  fixture FAIL (accepted bad input): {name}")
+            failures += 1
+    for name, row, expected in [
+        ("holistic clean request counts as success", good_grid, True),
+        ("holistic timeout never counts as success", dict(good_grid, timeout=True), False),
+    ]:
+        if grid_success(row) is expected:
+            print(f"  fixture PASS: {name}")
+        else:
+            print(f"  fixture FAIL: {name}")
             failures += 1
     if failures:
         print(f"self-test: {failures} fixture failure(s)")

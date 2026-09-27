@@ -1,0 +1,71 @@
+{
+  "1A:A": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "1A:B": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "1F-direct:A": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "1F-direct:B": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "1F-proxy:A": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "1F-proxy:B": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "2B-calibration:A": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "2B-calibration:B": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "temporary": true,
+    "topology": "dual TP4/EP4"
+  },
+  "2B:A": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 7362048,
+    "max_running_requests": 16,
+    "topology": "dual TP4/EP4"
+  },
+  "2B:B": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 6445120,
+    "max_running_requests": 48,
+    "temporary": true,
+    "topology": "dual TP4/EP4"
+  },
+  "2D:T": {
+    "kv_dtype": "fp8_e4m3",
+    "kv_pool_tokens": 11556672,
+    "max_running_requests": 32,
+    "temporary": true,
+    "topology": "single TP8/EP8"
+  }
+}
